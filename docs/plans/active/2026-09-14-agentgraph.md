@@ -1,0 +1,88 @@
+# Kế hoạch: agentgraph — multi-agent, graph động trong harness động
+
+**Bắt đầu:** 2026-09-14 · **Trạng thái:** mốc 1–3 xong, ba năng lực lõi đã kiểm chứng bằng agent thật
+
+## Bối cảnh
+
+Khác `../harness-graph` (Python, tự gọi Claude API, tự chạy loop). Ở đây mỗi
+node là **một tiến trình agent có sẵn** (claude code, codex) vốn đã có harness
+riêng. Hệ này là **meta-harness**: điều phối, cô lập, kiểm chứng, và cho phép
+graph tự mọc lúc chạy.
+
+## Quyết định đã chốt
+
+| Quyết định | Chốt | Vì sao |
+| --- | --- | --- |
+| Ngôn ngữ | Rust 1.95, workspace 2 crate | core tách khỏi UI để thêm web sau |
+| Giao diện | TUI ratatui trước | một binary, chạy cạnh claude/codex |
+| Điều khiển agent | headless NDJSON + resume | parse được tiến độ/cost; giữ session cho sub-agent bền |
+| Cô lập | git worktree mỗi node | rẻ, song song an toàn, diff từng agent tách bạch |
+| Tự sửa | spawn node + write skill/memory | có giá trị thật mà vẫn chặn được |
+| Trạng thái | event log JSONL append-only | TUI chỉ là người đọc log; replay dựng lại y nguyên |
+| Kênh protocol | `--append-system-prompt` | nhét vào task bị agent coi là prompt injection (đã gặp thật) |
+
+## Mốc
+
+- [x] **Mốc 1 — lõi chạy được.** ids/event/graph/harness/workspace/run,
+      adapter claude + codex + fake, TUI, doctor, verifier. 32 test xanh.
+      Đã chạy thật với claude: tạo file, verifier xanh, commit vào branch riêng.
+- [x] **Mốc 2 — graph nhiều node thật.** claude + codex chạy SONG SONG, mỗi
+      cái một worktree, verifier riêng đều xanh; node join merge được cả hai
+      nhánh — chứng minh bằng verifier `grep ALPHA a.txt && grep BETA b.txt`
+      xanh trong worktree của review. Tổng $0.19. TUI đã render và kiểm chứng
+      bằng pty capture (điều hướng + con trỏ chọn).
+- [x] **Mốc 3 — ba năng lực lõi, agent THẬT.** claude tự spawn một node codex
+      (graph mọc 1→2 lúc chạy), node con thấy được việc node cha, và
+      `write_skill` ghi vào `.agentgraph/skills/` rồi được nạp lại ở lần sau.
+      Tổng $0.39. Hai bug nặng lộ ra ở đây, xem mục dưới.
+
+- [ ] **Mốc 3b — resume.** Hiện `session` đã lưu nhưng chưa có đường để node
+      sau nói chuyện lại với agent cũ. Cần lệnh `ask <node> <câu hỏi>`.
+- [ ] **Mốc 4 — web UI.** Core đã UI-agnostic; thêm axum + SSE đọc cùng event log.
+- [ ] **Mốc 5 — grind/budget theo node.** Hiện chỉ có trần toàn cục + timeout.
+
+## Hai bug nặng lộ ra khi thử với agent thật
+
+1. **Chuỗi một dep không merge.** `run.rs` chỉ merge nhánh cha khi node có
+   HƠN một dep, nên hình dạng phổ biến nhất — `làm → review` — cho người
+   review nhìn vào cây trống. Mọi test cũ dùng `isolate = "shared"` nên che
+   mất. Đã sửa, có test chạy trong git repo thật.
+
+2. **Agent phớt lờ `write_skill`.** Được bảo "ghi lại quy trình", claude ghi
+   vào `.claude/skills/` của chính nó — prior của agent thắng protocol, và
+   công sức mất sạch khi node kết thúc. Đã sửa bằng cách gọi đích danh những
+   chỗ KHÔNG được ghi, kèm lệnh copy-paste sẵn. Xác nhận lại bằng agent thật.
+
+## Đợt sửa 2026-09-15
+
+- `Mutation::Spawn` có `verify`; chuỗi rỗng bị từ chối vì `sh -c ""` luôn xanh.
+  Chạy thật: agent tự kèm `python3 check_util.py`, verifier chạy trên node con.
+- Cảnh báo "không có verify" từng emit TRƯỚC `NodeAdded`, nên fold bỏ qua và
+  nó vô hình trên TUI/web. `NodeAdded` của node spawn cũng ghi sai dep (bỏ
+  mất `after`). Test mới kiểm qua `View`, đúng thứ giao diện thấy.
+- Con trỏ đọc mutation khoá theo node, nên ở chế độ `shared` node chạy sau
+  áp lại mutation của node trước. Giờ khoá theo đường dẫn file.
+
+## Rủi ro còn mở
+
+- `bypassPermissions` cần thiết để agent làm việc không giám sát, nhưng đó là
+  bỏ mọi kiểm tra quyền. Chỉ dùng trong worktree dùng một lần.
+- Chi phí codex là **ước lượng** từ token (codex không trả USD). Không được
+  trộn lẫn với số thật của claude khi báo cáo.
+- Merge SẠCH đã thử và chạy được. Merge ĐỤNG ĐỘ thì chưa — mới chỉ có đường
+  code abort rồi báo cho agent, chưa có lần chạy thật nào chứng minh.
+- Node do agent spawn có `verify` nhưng là TUỲ CHỌN. Không kèm thì node vẫn
+  chạy và log ghi "chỉ tin lời agent". Agent thật (claude sonnet) đã tự kèm
+  verify khi được protocol dạy, nhưng không có gì bắt buộc nó.
+- Chế độ `shared`: các node chạy ĐỒNG THỜI dùng chung một file mutation, nên
+  node spawn được gán cho node nào đọc file trước. Mỗi dòng chỉ áp một lần,
+  nhưng quan hệ cha–con có thể sai. Muốn đúng thì dùng `worktree` (mặc định).
+- Chưa có cách huỷ giữa chừng ngoài `q` (tiến trình con có thể còn sống).
+
+## Chạy lại kiểm chứng
+
+```bash
+cargo test                      # 32 test, không cần API key
+cargo run -p agentgraph-cli -- doctor
+cd /tmp && mkdir t && cd t && git init -q && ...   # xem README
+```

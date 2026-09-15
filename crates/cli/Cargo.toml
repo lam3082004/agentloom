@@ -1,0 +1,25 @@
+[package]
+name = "agentgraph-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "agentgraph"
+path = "src/main.rs"
+
+[dependencies]
+agentgraph-core = { path = "../core" }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+axum.workspace = true
+tokio-stream.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

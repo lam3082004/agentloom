@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>agentgraph</title>
+<style>
+  :root{
+    --bg:#fafbfc; --panel:#fff; --ink:#0e141c; --ink2:#47535f; --ink3:#646f7a;
+    --rule:#d5dce4; --blue:#1746c4; --green:#0f7b3f; --amber:#9a5203;
+    --red:#b3261e; --mag:#7b2d8e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
+         padding:10px 16px;border-bottom:1px solid var(--rule);background:var(--panel)}
+  .brand{font-weight:700;letter-spacing:-.01em}
+  .goal{color:var(--ink3);flex:1;min-width:180px}
+  .cost{font-variant-numeric:tabular-nums;font-weight:700;color:var(--green)}
+  .counts{color:var(--ink2);font-size:13px}
+  .dead{color:var(--red);font-weight:600}
+  main{display:grid;grid-template-columns:minmax(240px,34%) 1fr;gap:14px;
+       padding:14px 16px;align-items:start}
+  @media (max-width:760px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:10px;
+        overflow:hidden}
+  .card h2{margin:0;padding:8px 12px;font-size:12px;letter-spacing:.08em;
+           text-transform:uppercase;color:var(--ink3);font-weight:600;
+           border-bottom:1px solid var(--rule)}
+  ul{list-style:none;margin:0;padding:6px}
+  li{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;
+     cursor:pointer;font-size:13px}
+  li:hover{background:#f2f5f8}
+  li[aria-selected=true]{background:#edf2fd;outline:1px solid var(--blue)}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--ink3)}
+  .s-running{background:var(--amber);animation:p 1s infinite}
+  .s-done{background:var(--green)} .s-failed{background:var(--red)}
+  .s-skipped{background:var(--rule)} .s-ready{background:var(--blue)}
+  @keyframes p{50%{opacity:.25}}
+  .nid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600}
+  .dep{margin-left:14px}
+  .meta{margin-left:auto;color:var(--ink3);font-size:12px;
+        font-variant-numeric:tabular-nums;white-space:nowrap}
+  .byagent{color:var(--mag);font-size:11px}
+  pre{margin:0;padding:12px;white-space:pre-wrap;word-break:break-word;
+      font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink2);
+      max-height:72vh;overflow:auto}
+  .l-tool{color:var(--blue)} .l-mut{color:var(--mag)} .l-note{color:var(--ink3)}
+  .l-bad{color:var(--red)} .l-ok{color:var(--green)}
+  .empty{padding:16px;color:var(--ink3)}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">agentgraph</span>
+  <span class="goal" id="goal">đang nạp…</span>
+  <span class="cost" id="cost">$0.00</span>
+  <span class="counts" id="counts"></span>
+</header>
+<main>
+  <section class="card">
+    <h2 id="graphTitle">graph</h2>
+    <ul id="nodes"></ul>
+  </section>
+  <section class="card">
+    <h2 id="logTitle">log</h2>
+    <pre id="log" class="empty">chọn một node</pre>
+  </section>
+</main>
+<script>
+let view = {order:[], nodes:{}, goal:"", total_cost:0, finished:false, mutations_rejected:0};
+let sel = null;
+// Người dùng đã tự cuộn lên thì đừng giật xuống đáy sau mỗi event.
+let stick = true;
+
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+function lineClass(l){
+  if (l.startsWith('→')) return 'l-tool';
+  if (l.startsWith('⚙')) return l.includes('TỪ CHỐI') ? 'l-bad' : 'l-mut';
+  if (l.startsWith('!')) return 'l-bad';
+  if (l.startsWith('✓')) return 'l-ok';
+  if (l.startsWith('✕')) return 'l-bad';
+  if (l.startsWith('i') || l.startsWith('⌂')) return 'l-note';
+  return '';
+}
+
+function renderNodes(){
+  const ul = document.getElementById('nodes');
+  ul.innerHTML = '';
+  for (const id of view.order){
+    const n = view.nodes[id]; if (!n) continue;
+    const li = document.createElement('li');
+    li.setAttribute('aria-selected', id === sel);
+    li.onclick = () => { sel = id; stick = true; render(); };
+    const bits = [];
+    bits.push(`<span class="dot s-${esc(n.state)}"></span>`);
+    bits.push(`<span class="nid${n.deps.length ? ' dep' : ''}">${esc(n.id)}</span>`);
+    bits.push(`<span style="color:var(--ink3)">${esc(n.agent)}</span>`);
+    if (n.by_agent) bits.push('<span class="byagent" title="do agent sinh ra">⚙</span>');
+    const meta = [];
+    if (n.elapsed_s) meta.push(n.elapsed_s + 's');
+    if (n.cost > 0) meta.push('$' + n.cost.toFixed(2));
+    if (meta.length) bits.push(`<span class="meta">${esc(meta.join(' · '))}</span>`);
+    li.innerHTML = bits.join('');
+    ul.appendChild(li);
+  }
+  document.getElementById('graphTitle').textContent = `graph · ${view.order.length} node`;
+}
+
+function renderLog(){
+  const pre = document.getElementById('log');
+  const n = sel && view.nodes[sel];
+  if (!n){ pre.className='empty'; pre.textContent='chọn một node'; 
+           document.getElementById('logTitle').textContent='log'; return; }
+  document.getElementById('logTitle').textContent =
+    `${n.id}${n.title && n.title !== n.id ? ' — ' + n.title : ''} · ${n.agent} · ${n.state}`;
+  pre.className='';
+  pre.innerHTML = n.lines.map(l =>
+    `<span class="${lineClass(l)}">${esc(l)}</span>`).join('\n');
+  if (stick) pre.scrollTop = pre.scrollHeight;
+}
+
+function renderHead(){
+  document.getElementById('goal').textContent = view.goal || '';
+  document.getElementById('cost').textContent = '$' + (view.total_cost || 0).toFixed(2);
+  let r=0,d=0,f=0,w=0;
+  for (const id of view.order){
+    const s = (view.nodes[id]||{}).state;
+    if (s==='running') r++; else if (s==='done') d++;
+    else if (s==='failed') f++; else w++;
+  }
+  const parts = [`${r} chạy`, `${d} xong`, `${f} hỏng`, `${w} chờ`];
+  if (view.mutations_rejected) parts.push(`${view.mutations_rejected} mutation bị từ chối`);
+  if (view.finished) parts.push('XONG');
+  const el = document.getElementById('counts');
+  el.textContent = parts.join(' · ');
+  el.className = 'counts' + (f ? ' dead' : '');
+}
+
+function render(){ renderHead(); renderNodes(); renderLog(); }
+
+document.getElementById('log').addEventListener('scroll', e => {
+  const el = e.target;
+  stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+});
+
+// Ảnh chụp trước, stream sau: mở tab muộn hay reload đều không mất dữ liệu.
+// Server đã fold sẵn; ở đây chỉ ghép, không diễn giải event.
+fetch('/api/view').then(r => r.json()).then(v => {
+  view = v;
+  if (!sel && view.order.length) sel = view.order[0];
+  render();
+  const es = new EventSource('/api/events');
+  es.onmessage = m => {
+    let p; try { p = JSON.parse(m.data); } catch (_) { return; }
+    mergePatch(p);
+    if (!sel && view.order.length) sel = view.order[0];
+    render();
+  };
+}).catch(() => {
+  document.getElementById('goal').textContent = 'không nối được tới agentgraph';
+});
+
+/** Ghép một Patch: thay metadata node, nối thêm log. Không có logic nghiệp vụ. */
+function mergePatch(p){
+  const m = p.view;
+  view.goal = m.goal;
+  view.order = m.order;
+  view.total_cost = m.total_cost;
+  view.finished = m.finished;
+  view.mutations_rejected = m.mutations_rejected;
+  for (const nm of m.nodes){
+    const old = view.nodes[nm.id];
+    view.nodes[nm.id] = Object.assign({}, nm, {lines: old ? old.lines : []});
+  }
+  if (p.node && p.lines && p.lines.length){
+    const n = view.nodes[p.node];
+    if (n){
+      n.lines.push(...p.lines);
+      if (n.lines.length > 2000) n.lines.splice(0, n.lines.length - 2000);
+    }
+  }
+}
+</script>
+</body>
+</html>
