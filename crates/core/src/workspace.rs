@@ -84,6 +84,16 @@ impl Worktrees {
         if path.exists() {
             return Ok(path);
         }
+        // Worktree tách nhánh từ HEAD, mà repo vừa `git init` thì chưa có HEAD.
+        // Git chỉ báo "invalid reference: HEAD" — không nói phải làm gì.
+        let (has_commit, _) =
+            git(&self.repo_root, &["rev-parse", "--verify", "-q", "HEAD"]).await?;
+        if !has_commit {
+            anyhow::bail!(
+                "repo chưa có commit nào — worktree cần ít nhất một commit. \
+                 Chạy: git add -A && git commit -m init (hoặc git commit --allow-empty -m init)"
+            );
+        }
         tokio::fs::create_dir_all(&self.base).await?;
         let branch = self.branch_of(id);
         let p = path.to_string_lossy().into_owned();

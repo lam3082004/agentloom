@@ -516,18 +516,17 @@ impl Runner {
         let cwd = self.workspaces.get(id)?.clone();
         // Không chạy được verifier thì coi như ĐỎ: im lặng cho qua đúng bằng
         // việc không có verifier, mà node này lại có khai báo verify.
-        let child = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
+        let mut command = crate::agent::shell(&cmd);
+        command
             .current_dir(&cwd)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            // Nhóm tiến trình riêng: lệnh verify thường đẻ tiến trình con
-            // (`sh` gọi tiếp lệnh khác), giết mỗi tiến trình trực tiếp sẽ để
-            // lại đám con mồ côi chạy mãi.
-            .process_group(0)
-            .spawn();
+            .kill_on_drop(true);
+        // Nhóm tiến trình riêng: lệnh verify thường đẻ tiến trình con (shell
+        // gọi tiếp lệnh khác), giết mỗi tiến trình trực tiếp sẽ để lại đám
+        // con mồ côi chạy mãi.
+        crate::agent::own_process_group(&mut command);
+        let child = command.spawn();
         let child = match child {
             Ok(c) => c,
             Err(e) => return Some((false, format!("không chạy được verify: {e}"))),
@@ -535,14 +534,7 @@ impl Runner {
         let pgid = child.id();
         let kill_pgid = || async move {
             if let Some(p) = pgid {
-                // `kill` là builtin của sh, không thêm phụ thuộc mới.
-                let _ = tokio::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(format!("kill -KILL -{p}"))
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .await;
+                crate::agent::kill_process_group(p).await;
             }
         };
         // Verifier cũng phải có trần thời gian: một lệnh treo (test chờ nhập,

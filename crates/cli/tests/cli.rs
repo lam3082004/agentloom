@@ -300,6 +300,29 @@ fn ask_bao_ro_khi_worktree_da_bi_xoa() {
     );
 }
 
+/// `doctor` từng báo "✓ cô lập worktree bật" trong repo vừa `git init` — đúng
+/// tình huống worktree không tạo nổi. Người mới tin dấu ✓ rồi vấp ngay lượt đầu.
+#[test]
+fn doctor_canh_bao_repo_chua_co_commit() {
+    let d = tmp();
+    Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&d.0)
+        .output()
+        .unwrap();
+    let o = Command::new(BIN)
+        .arg("doctor")
+        .current_dir(&d.0)
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(out.contains("chưa có commit"), "phải cảnh báo: {out}");
+    assert!(
+        !out.contains("cô lập worktree bật"),
+        "không được báo ✓ sai: {out}"
+    );
+}
+
 #[test]
 fn runs_khong_co_thu_muc_thi_bao_ro_chu_khong_loi() {
     let d = tmp();
@@ -362,6 +385,44 @@ fn runs_liet_ke_moi_nhat_truoc_va_khong_chet_vi_log_do_dang() {
     assert!(lines[1].contains("20240101-000000-aaaaaa"));
     assert!(lines[1].contains("OK"), "run xong sạch: {out}");
     assert!(lines[1].contains("muc tieu cu"));
+}
+
+/// Huỷ giữa chừng hoặc chạm trần ngân sách để lại node chưa từng chạy. Không
+/// đếm chúng thì tổng hiển thị ít hơn số node trong plan và người đọc tưởng
+/// plan nhỏ hơn thực tế.
+#[test]
+fn runs_dem_ca_node_chua_chay() {
+    let d = tmp();
+    let run =
+        d.0.join(".agentgraph")
+            .join("runs")
+            .join("20240103-000000-cccccc");
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(
+        run.join("events.jsonl"),
+        [
+            r#"{"seq":1,"at":"2024-01-03T00:00:00Z","kind":"run_started","goal":"bi huy","run":"20240103-000000-cccccc"}"#,
+            r#"{"seq":2,"at":"2024-01-03T00:00:01Z","node":"a","kind":"node_added","title":"a","agent":"fake","deps":[],"by":"plan"}"#,
+            r#"{"seq":3,"at":"2024-01-03T00:00:01Z","node":"b","kind":"node_added","title":"b","agent":"fake","deps":["a"],"by":"plan"}"#,
+            r#"{"seq":4,"at":"2024-01-03T00:00:01Z","node":"c","kind":"node_added","title":"c","agent":"fake","deps":["a"],"by":"plan"}"#,
+            r#"{"seq":5,"at":"2024-01-03T00:00:02Z","node":"a","kind":"node_state","state":"running"}"#,
+            r#"{"seq":6,"at":"2024-01-03T00:00:03Z","node":"a","kind":"node_state","state":"failed"}"#,
+            r#"{"seq":7,"at":"2024-01-03T00:00:03Z","kind":"run_finished","ok":false,"total_cost_usd":0.0}"#,
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+    let o = Command::new(BIN)
+        .args(["runs", "--root", d.0.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(out.contains("1 hỏng"), "{out}");
+    assert!(
+        out.contains("2 chưa chạy"),
+        "b và c chưa từng chạy phải được đếm: {out}"
+    );
 }
 
 /// Ctrl-C thật (SIGINT) khi graph đã xong nhanh (không còn gì để giết) không

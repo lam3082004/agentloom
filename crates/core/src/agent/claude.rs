@@ -43,7 +43,8 @@ impl AgentAdapter for ClaudeAdapter {
             // Nhóm tiến trình riêng, giống verifier trong run.rs: claude có
             // thể đẻ tiến trình con (chạy shell, dev server...); huỷ giữa
             // chừng mà chỉ giết đúng pid claude sẽ để lại đám con mồ côi.
-            .process_group(0);
+            ;
+        super::own_process_group(&mut cmd);
         if !req.protocol.is_empty() {
             cmd.arg("--append-system-prompt").arg(&req.protocol);
         }

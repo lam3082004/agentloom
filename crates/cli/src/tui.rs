@@ -9,7 +9,6 @@ use std::time::Duration;
 pub struct Ui {
     pub view: View,
     pub sel: usize,
-    pub follow: bool,
     pub scroll: u16,
 }
 
@@ -18,7 +17,6 @@ impl Ui {
         Self {
             view: View::default(),
             sel: 0,
-            follow: true,
             scroll: 0,
         }
     }
@@ -66,7 +64,6 @@ impl Ui {
                     self.sel = self.sel.saturating_sub(1);
                     self.scroll = 0;
                 }
-                KeyCode::Char('f') => self.follow = !self.follow,
                 KeyCode::PageUp => self.handle_page(true),
                 KeyCode::PageDown => self.handle_page(false),
                 _ => {}

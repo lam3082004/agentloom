@@ -71,12 +71,12 @@ impl AgentAdapter for FakeAdapter {
                 .trim()
                 .parse()
                 .unwrap_or(0);
-            let mut child = tokio::process::Command::new("sleep")
-                .arg(secs.to_string())
+            let mut cmd = tokio::process::Command::new("sleep");
+            cmd.arg(secs.to_string())
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .process_group(0)
-                .spawn()?;
+                .stderr(std::process::Stdio::null());
+            super::own_process_group(&mut cmd);
+            let mut child = cmd.spawn()?;
             let pid = child.id();
             if let Some(pid) = pid {
                 log.emit(

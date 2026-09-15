@@ -70,14 +70,61 @@ pub(crate) async fn wait_for_cancel(rx: &mut tokio::sync::watch::Receiver<bool>)
     }
 }
 
-/// Giết cả process group của tiến trình con — cùng cách run.rs đã dùng cho
-/// verifier. Giết mỗi child trực tiếp (`Child::start_kill`) chỉ giết đúng
-/// pid đó; tiến trình cháu (shell con, dev server nó tự mở...) sống sót và
-/// mồ côi mãi mãi. Dùng chung ở đây để claude/codex/fake không lặp lại logic.
+/// Cho tiến trình con một nhóm riêng để sau này giết được cả cây của nó
+/// (shell con, dev server agent tự mở...), không chỉ đúng pid trực tiếp.
+///
+/// Unix: process group mới. Windows: `CREATE_NEW_PROCESS_GROUP` — bản thân cờ
+/// này không giết được gì, việc giết cả cây do `taskkill /T` ở dưới đảm nhận,
+/// nhưng nó tách tiến trình con khỏi Ctrl-C của console cha.
+pub(crate) fn own_process_group(cmd: &mut tokio::process::Command) {
+    #[cfg(unix)]
+    {
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+}
+
+/// Lệnh chạy một chuỗi shell — dùng cho `verify`. Unix đi qua `sh -c`,
+/// Windows qua `cmd /C`; cú pháp lệnh verify vì vậy phụ thuộc nền tảng.
+pub(crate) fn shell(script: &str) -> tokio::process::Command {
+    #[cfg(unix)]
+    {
+        let mut c = tokio::process::Command::new("sh");
+        c.arg("-c").arg(script);
+        c
+    }
+    #[cfg(windows)]
+    {
+        let mut c = tokio::process::Command::new("cmd");
+        c.arg("/C").arg(script);
+        c
+    }
+}
+
+/// Giết cả cây tiến trình bắt đầu từ `pid`. Giết mỗi child trực tiếp
+/// (`Child::start_kill`) chỉ giết đúng pid đó; tiến trình cháu sống sót và
+/// mồ côi mãi mãi. Dùng chung cho claude/codex/fake và verifier.
 pub(crate) async fn kill_process_group(pid: u32) {
-    let _ = tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("kill -KILL -{pid}"))
+    #[cfg(unix)]
+    let mut c = {
+        // `kill -<pgid>` nhắm cả nhóm; `kill` là builtin của sh nên không
+        // phụ thuộc binary ngoài.
+        let mut c = tokio::process::Command::new("sh");
+        c.arg("-c").arg(format!("kill -KILL -{pid}"));
+        c
+    };
+    #[cfg(windows)]
+    let mut c = {
+        // /T giết cả cây con, /F không hỏi.
+        let mut c = tokio::process::Command::new("taskkill");
+        c.args(["/T", "/F", "/PID", &pid.to_string()]);
+        c
+    };
+    let _ = c
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()

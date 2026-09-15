@@ -1021,3 +1021,43 @@ isolate = "shared"
         "mutation bị áp bởi: {lan_ap:?}"
     );
 }
+
+/// `git init` xong chạy luôn là tình huống đầu tiên người mới gặp. Worktree cần
+/// ít nhất một commit; lỗi git thô "invalid reference: HEAD" không nói phải làm
+/// gì, nên lý do hỏng phải chỉ thẳng cách sửa.
+#[tokio::test]
+async fn repo_chua_co_commit_thi_bao_ro_cach_sua() {
+    let d = tmp();
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&d.0)
+        .output()
+        .unwrap();
+    let (s, ev) = run(
+        &d.0,
+        plan(
+            r#"
+goal = "g"
+[[node]]
+id = "a"
+title = "a"
+agent = "fake"
+task = "x"
+"#,
+        ),
+    )
+    .await;
+    assert_eq!(s.failed, 1);
+    let ly_do = ev
+        .iter()
+        .find_map(|e| match &e.kind {
+            EventKind::NodeFinished { summary, .. } => Some(summary.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        ly_do.contains("chưa có commit"),
+        "lý do phải nói rõ: {ly_do}"
+    );
+    assert!(ly_do.contains("git commit"), "phải chỉ cách sửa: {ly_do}");
+}

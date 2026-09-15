@@ -507,15 +507,25 @@ async fn runs(root: PathBuf) -> anyhow::Result<()> {
         // Đếm trên trạng thái node đã fold sẵn trong View — không đọc lại
         // event thô lần hai, đúng nguyên tắc "một phép fold, ba mặt" áp dụng
         // luôn cho mặt thứ tư này.
-        let (mut done, mut failed, mut skipped) = (0, 0, 0);
+        let (mut done, mut failed, mut skipped, mut pending, mut running) = (0, 0, 0, 0, 0);
         for n in v.nodes.values() {
             match n.state.as_str() {
                 "done" => done += 1,
                 "failed" => failed += 1,
                 "skipped" => skipped += 1,
-                _ => {}
+                "running" => running += 1,
+                // blocked/ready: huỷ giữa chừng hay chạm trần ngân sách để lại
+                // node chưa từng chạy — bỏ qua chúng thì tổng nhỏ hơn plan thật.
+                _ => pending += 1,
             }
         }
+        // Chỉ hiện khi có: lượt đã xong thì không thể còn node đang chạy, in
+        // "0 đang chạy" ở mọi dòng chỉ thêm nhiễu.
+        let dang_chay = if running > 0 {
+            format!(" · {running} đang chạy")
+        } else {
+            String::new()
+        };
         let trang_thai = if !v.finished {
             "DỞ DANG"
         } else if v.ok {
@@ -524,7 +534,7 @@ async fn runs(root: PathBuf) -> anyhow::Result<()> {
             "CÓ LỖI"
         };
         println!(
-            "{id:<24} {trang_thai:<8} {done} xong · {failed} hỏng · {skipped} bỏ qua · ${:.2} · {}",
+            "{id:<24} {trang_thai:<8} {done} xong · {failed} hỏng · {skipped} bỏ qua · {pending} chưa chạy{dang_chay} · ${:.2} · {}",
             v.total_cost, v.goal
         );
     }
@@ -557,15 +567,25 @@ async fn doctor() -> anyhow::Result<()> {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    println!(
-        "  {} thư mục hiện tại {}",
-        if is_repo { "✓" } else { "!" },
-        if is_repo {
-            "là git repo — cô lập worktree bật".to_string()
-        } else {
-            "KHÔNG phải git repo — mọi node sẽ dùng chung thư mục".to_string()
-        }
-    );
+    // Là repo chưa đủ: worktree tách nhánh từ HEAD, repo vừa `git init` chưa
+    // có HEAD nên mọi node isolate=worktree sẽ hỏng ngay lượt đầu.
+    let has_commit = is_repo
+        && std::process::Command::new("git")
+            .args(["rev-parse", "--verify", "-q", "HEAD"])
+            .current_dir(&cwd)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    let (mark, msg) = match (is_repo, has_commit) {
+        (true, true) => ("✓", "là git repo — cô lập worktree bật"),
+        (true, false) => (
+            "!",
+            "là git repo nhưng chưa có commit nào — worktree cần ít nhất một commit. \
+             Chạy: git add -A && git commit -m init",
+        ),
+        _ => ("!", "KHÔNG phải git repo — mọi node sẽ dùng chung thư mục"),
+    };
+    println!("  {mark} thư mục hiện tại {msg}");
     if missing > 0 {
         println!("\n{missing} agent chưa cài. Node dùng agent đó sẽ thất bại.");
     }

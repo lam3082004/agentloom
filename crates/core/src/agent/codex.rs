@@ -45,21 +45,6 @@ impl AgentAdapter for CodexAdapter {
     }
 
     async fn run(&self, req: AgentRequest, log: &EventLog) -> anyhow::Result<AgentOutcome> {
-        let mut cmd = Command::new("codex");
-        cmd.arg("exec");
-        // resume là subcommand, không phải flag — khác hẳn claude.
-        if let Some(s) = &req.session {
-            cmd.arg("resume").arg(s);
-        }
-        cmd.arg("--json")
-            .arg("--skip-git-repo-check")
-            .arg("--sandbox")
-            .arg("workspace-write")
-            .arg("-C")
-            .arg(&req.cwd);
-        if let Some(m) = &req.model {
-            cmd.arg("--model").arg(m);
-        }
         let prompt = if req.protocol.is_empty() {
             req.task.clone()
         } else {
@@ -68,13 +53,18 @@ impl AgentAdapter for CodexAdapter {
                 req.task, req.protocol
             )
         };
-        cmd.arg(&prompt)
+        let mut cmd = Command::new("codex");
+        cmd.args(codex_args(&req, &prompt))
+            // Đặt thư mục bằng cwd của tiến trình chứ không chỉ bằng `-C`:
+            // subcommand `resume` không có `-C`, nên đây là đường duy nhất để
+            // phiên resume chạy đúng trong worktree của node.
+            .current_dir(&req.cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            // Nhóm tiến trình riêng — cùng lý do như claude: codex có thể đẻ
-            // shell con, giết mỗi pid trực tiếp để mồ côi phần còn lại.
-            .process_group(0);
+            .stderr(std::process::Stdio::piped());
+        // Nhóm tiến trình riêng — cùng lý do như claude: codex có thể đẻ shell
+        // con, giết mỗi pid trực tiếp để mồ côi phần còn lại.
+        super::own_process_group(&mut cmd);
 
         let mut child = cmd.spawn()?;
         // Lấy trước khi bị `wait`/`start_kill` làm mất.
@@ -167,6 +157,44 @@ impl AgentAdapter for CodexAdapter {
         }
         Ok(out)
     }
+}
+
+/// Dựng tham số dòng lệnh cho codex. Tách thành hàm thuần để test được mà
+/// không phải chạy codex thật.
+///
+/// Phiên mới và phiên resume nhận bộ flag KHÁC NHAU: `codex exec resume` từ
+/// chối `--sandbox` và `-C` (codex thoát mã 2). Usage của nó là
+/// `codex exec resume [FLAGS] <SESSION_ID> [PROMPT]`.
+fn codex_args(req: &AgentRequest, prompt: &str) -> Vec<std::ffi::OsString> {
+    let mut a: Vec<std::ffi::OsString> = vec!["exec".into()];
+    match &req.session {
+        Some(session) => {
+            a.push("resume".into());
+            a.push("--json".into());
+            a.push("--skip-git-repo-check".into());
+            a.push("-c".into());
+            a.push("sandbox_mode=\"workspace-write\"".into());
+            if let Some(m) = &req.model {
+                a.push("--model".into());
+                a.push(m.into());
+            }
+            a.push(session.into());
+        }
+        None => {
+            a.push("--json".into());
+            a.push("--skip-git-repo-check".into());
+            a.push("--sandbox".into());
+            a.push("workspace-write".into());
+            a.push("-C".into());
+            a.push(req.cwd.clone().into_os_string());
+            if let Some(m) = &req.model {
+                a.push("--model".into());
+                a.push(m.into());
+            }
+        }
+    }
+    a.push(prompt.into());
+    a
 }
 
 fn handle(v: &Value, req: &AgentRequest, log: &EventLog, out: &mut AgentOutcome, price: Price) {
@@ -318,6 +346,47 @@ mod tests {
             cancel: tokio::sync::watch::channel(false).1,
         }
     }
+    fn args_str(req: &AgentRequest) -> Vec<String> {
+        codex_args(req, "cau hoi")
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn phien_moi_dat_sandbox_va_thu_muc_bang_flag() {
+        let a = args_str(&req());
+        assert_eq!(&a[..1], &["exec".to_string()]);
+        assert!(a.windows(2).any(|w| w == ["--sandbox", "workspace-write"]));
+        assert!(a.iter().any(|x| x == "-C"));
+        assert_eq!(a.last().unwrap(), "cau hoi");
+    }
+
+    /// Bug thật: `codex exec resume` KHÔNG nhận `--sandbox` và `-C` (chỉ
+    /// `codex exec` thường mới có). Truyền vào là codex thoát mã 2 và `ask`
+    /// với codex hỏng hoàn toàn. Sandbox phải đi qua `-c sandbox_mode=...`.
+    #[test]
+    fn resume_khong_dung_flag_ma_subcommand_resume_tu_choi() {
+        let mut r = req();
+        r.session = Some("01a0a332-3a8a-7e53-8ac0-1847f216d9dc".into());
+        let a = args_str(&r);
+        assert_eq!(&a[..2], &["exec".to_string(), "resume".to_string()]);
+        assert!(
+            !a.iter().any(|x| x == "--sandbox"),
+            "resume từ chối --sandbox: {a:?}"
+        );
+        assert!(!a.iter().any(|x| x == "-C"), "resume từ chối -C: {a:?}");
+        assert!(
+            a.windows(2)
+                .any(|w| w == ["-c", "sandbox_mode=\"workspace-write\""]),
+            "sandbox phải đi qua -c: {a:?}"
+        );
+        // Theo usage của codex: flag trước, rồi SESSION_ID, rồi PROMPT.
+        let n = a.len();
+        assert_eq!(a[n - 2], "01a0a332-3a8a-7e53-8ac0-1847f216d9dc");
+        assert_eq!(a[n - 1], "cau hoi");
+    }
+
     fn log() -> (EventLog, std::path::PathBuf) {
         let d = std::env::temp_dir().join(format!("ag-cx-{}", uuid::Uuid::new_v4()));
         (EventLog::create(d.join("e.jsonl")).unwrap(), d)
