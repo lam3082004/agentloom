@@ -56,7 +56,7 @@ pub trait AgentAdapter: Send + Sync {
 
 /// Đợi tín hiệu huỷ THẬT — không đợi bừa `rx.changed()`.
 ///
-/// Khi không ai giữ `Sender` nữa (ví dụ `agentgraph ask` dùng kênh một lần,
+/// Khi không ai giữ `Sender` nữa (ví dụ `agentloom ask` dùng kênh một lần,
 /// không cần huỷ), `changed()` trả `Err` NGAY LẬP TỨC vì sender đã rớt — nếu
 /// `select!` coi bất kỳ lần `changed()` hoàn thành nào (kể cả lỗi) là "đã
 /// huỷ" thì mọi request không ai giữ sender sẽ bị coi là huỷ tức khắc dù

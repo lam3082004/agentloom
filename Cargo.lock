@@ -3,10 +3,10 @@
 version = 4
 
 [[package]]
-name = "agentgraph-cli"
+name = "agentloom-cli"
 version = "0.1.0"
 dependencies = [
- "agentgraph-core",
+ "agentloom-core",
  "anyhow",
  "axum",
  "chrono",
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentgraph-core"
+name = "agentloom-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",

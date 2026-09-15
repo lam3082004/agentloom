@@ -136,7 +136,7 @@ mod tests {
     use super::*;
     use crate::ids::NodeId;
 
-    /// Bug thật bắt được khi chạy `agentgraph ask` với claude thật: request
+    /// Bug thật bắt được khi chạy `agentloom ask` với claude thật: request
     /// dùng kênh huỷ dùng-một-lần (`watch::channel(false).1`, `Sender` bị rớt
     /// ngay lập tức vì không ai giữ). `cancel_rx.changed()` trả `Err` tức
     /// khắc trong trường hợp đó — nếu `select!` coi mọi lần `changed()` hoàn
@@ -156,7 +156,7 @@ mod tests {
             permission_mode: "acceptEdits".into(),
             timeout: std::time::Duration::from_secs(5),
             // Sender tạm, rớt ngay khi hết dòng này — mô phỏng đúng
-            // `agentgraph ask`, nơi không ai cần huỷ nên không giữ sender.
+            // `agentloom ask`, nơi không ai cần huỷ nên không giữ sender.
             cancel: tokio::sync::watch::channel(false).1,
         };
         let out = FakeAdapter::default().run(req, &log).await.unwrap();

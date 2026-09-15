@@ -19,13 +19,13 @@
 //!   tên miền của kẻ tấn công trỏ về 127.0.0.1 nhưng header Host vẫn là tên
 //!   miền đó.
 
-use agentgraph_core::agent::known_agents;
-use agentgraph_core::config::{Limits, Plan};
-use agentgraph_core::event::EventLog;
-use agentgraph_core::graph::{Isolate, NodeSpec};
-use agentgraph_core::ids::{NodeId, RunId};
-use agentgraph_core::run::Runner;
-use agentgraph_core::view::{Patch, View};
+use agentloom_core::agent::known_agents;
+use agentloom_core::config::{Limits, Plan};
+use agentloom_core::event::EventLog;
+use agentloom_core::graph::{Isolate, NodeSpec};
+use agentloom_core::ids::{NodeId, RunId};
+use agentloom_core::run::Runner;
+use agentloom_core::view::{Patch, View};
 use axum::extract::{Path as UrlPath, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
@@ -92,11 +92,12 @@ impl RunHandle {
                 };
                 let patch = {
                     let Ok(mut g) = v.write() else { continue };
-                    let (node, lines) = g.apply_tracked(&ev);
+                    let t = g.apply_tracked(&ev);
                     Patch {
                         view: g.meta(),
-                        node,
-                        lines,
+                        node: t.node,
+                        lines: t.lines,
+                        feed: t.feed,
                     }
                 };
                 let _ = tx2.send(patch);
@@ -220,7 +221,7 @@ async fn guard(State(app): State<App>, req: Request, next: Next) -> Response {
     if req.uri().path().starts_with("/api/") {
         let tu_header = req
             .headers()
-            .get("x-agentgraph-token")
+            .get("x-agentloom-token")
             .and_then(|v| v.to_str().ok());
         // EventSource của trình duyệt không đặt được header, nên SSE phải
         // truyền token qua query.
@@ -455,7 +456,7 @@ fn mac_dinh_timeout() -> u64 {
     30
 }
 
-/// Mặc định trùng với `agentgraph run` — hai cửa vào không được có hai bộ
+/// Mặc định trùng với `agentloom run` — hai cửa vào không được có hai bộ
 /// mặc định khác nhau.
 #[derive(Deserialize, Debug)]
 struct StartReq {
@@ -535,7 +536,7 @@ async fn api_start_run(State(app): State<App>, Json(req): Json<StartReq>) -> Res
     if !app.inner.can_start {
         return loi(
             StatusCode::FORBIDDEN,
-            "web này chỉ để xem — khởi động bằng `agentgraph web` để chạy từ trình duyệt",
+            "web này chỉ để xem — khởi động bằng `agentloom web` để chạy từ trình duyệt",
         );
     }
     if let Err(e) = kiem_tra_yeu_cau(&req) {
@@ -570,7 +571,7 @@ async fn api_start_run(State(app): State<App>, Json(req): Json<StartReq>) -> Res
 
     let run_id = RunId::generate();
     let events = root
-        .join(".agentgraph")
+        .join(".agentloom")
         .join("runs")
         .join(run_id.as_str())
         .join("events.jsonl");
@@ -654,7 +655,7 @@ async fn api_events(State(app): State<App>, UrlPath(id): UrlPath<String>) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentgraph_core::event::{EventKind, Origin};
+    use agentloom_core::event::{EventKind, Origin};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn tmp_dir(tag: &str) -> PathBuf {
@@ -714,7 +715,7 @@ mod tests {
         let body = body.unwrap_or("");
         let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
         if let Some(t) = token {
-            req.push_str(&format!("x-agentgraph-token: {t}\r\n"));
+            req.push_str(&format!("x-agentloom-token: {t}\r\n"));
         }
         if !body.is_empty() {
             req.push_str(&format!(
@@ -1015,7 +1016,7 @@ mod tests {
         assert!(list.contains("\"ok\":true"), "{list}");
         // Event log nằm trong chính project đã chọn.
         assert!(
-            repo.join(".agentgraph/runs")
+            repo.join(".agentloom/runs")
                 .join(&id)
                 .join("events.jsonl")
                 .exists()

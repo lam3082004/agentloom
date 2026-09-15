@@ -1,11 +1,11 @@
 //! Test toàn bộ đường ống: plan -> lập lịch -> chạy song song -> join ->
 //! mutation động. Dùng adapter giả nên không tốn token và không cần mạng.
 
-use agentgraph_core::config::{Limits, Plan};
-use agentgraph_core::event::{EventKind, EventLog};
-use agentgraph_core::graph::NodeState;
-use agentgraph_core::ids::NodeId;
-use agentgraph_core::run::Runner;
+use agentloom_core::config::{Limits, Plan};
+use agentloom_core::event::{EventKind, EventLog};
+use agentloom_core::graph::NodeState;
+use agentloom_core::ids::NodeId;
+use agentloom_core::run::Runner;
 
 struct Tmp(std::path::PathBuf);
 impl Drop for Tmp {
@@ -28,8 +28,8 @@ async fn run(
     dir: &std::path::Path,
     p: Plan,
 ) -> (
-    agentgraph_core::run::RunSummary,
-    Vec<agentgraph_core::event::Event>,
+    agentloom_core::run::RunSummary,
+    Vec<agentloom_core::event::Event>,
 ) {
     run_with(dir, p, 4).await
 }
@@ -39,8 +39,8 @@ async fn run_with(
     p: Plan,
     parallel: usize,
 ) -> (
-    agentgraph_core::run::RunSummary,
-    Vec<agentgraph_core::event::Event>,
+    agentloom_core::run::RunSummary,
+    Vec<agentloom_core::event::Event>,
 ) {
     let log = EventLog::create(dir.join("events.jsonl")).unwrap();
     let r = Runner::new(
@@ -50,7 +50,7 @@ async fn run_with(
             ..Default::default()
         },
         log.clone(),
-        agentgraph_core::ids::RunId::generate(),
+        agentloom_core::ids::RunId::generate(),
     )
     .await
     .unwrap();
@@ -137,7 +137,7 @@ isolate = "shared"
     assert_eq!(s.done, 2, "node do agent spawn phải được chạy");
     let added_by_agent = ev.iter().any(|e| {
         matches!(&e.kind, EventKind::NodeAdded { by, .. }
-            if *by == agentgraph_core::event::Origin::Agent)
+            if *by == agentloom_core::event::Origin::Agent)
     });
     assert!(added_by_agent, "phải ghi nhận node sinh ra bởi agent");
     assert!(s.ok);
@@ -215,13 +215,13 @@ async fn agent_khong_ton_tai_lam_node_that_bai_chu_khong_treo() {
         &d.0,
         Limits::default(),
         log,
-        agentgraph_core::ids::RunId::generate(),
+        agentloom_core::ids::RunId::generate(),
     )
     .await
     .unwrap();
     // Đi thẳng vào graph để vượt qua kiểm tra của mutation.
     r.graph
-        .add(agentgraph_core::graph::NodeSpec {
+        .add(agentloom_core::graph::NodeSpec {
             id: NodeId::new("x").unwrap(),
             title: "x".into(),
             agent: "khong-ton-tai".into(),
@@ -229,7 +229,7 @@ async fn agent_khong_ton_tai_lam_node_that_bai_chu_khong_treo() {
             deps: vec![],
             model: None,
             verify: None,
-            isolate: agentgraph_core::graph::Isolate::Shared,
+            isolate: agentloom_core::graph::Isolate::Shared,
         })
         .unwrap();
     let s = r
@@ -246,7 +246,7 @@ async fn agent_khong_ton_tai_lam_node_that_bai_chu_khong_treo() {
 trait Settled {
     fn graph_settled(&self) -> bool;
 }
-impl Settled for agentgraph_core::run::RunSummary {
+impl Settled for agentloom_core::run::RunSummary {
     fn graph_settled(&self) -> bool {
         self.done + self.failed + self.skipped > 0
     }
@@ -467,7 +467,7 @@ async fn cham_tran_ngan_sach_thi_dung_lai_chu_khong_quay_vong() {
             ..Default::default()
         },
         log,
-        agentgraph_core::ids::RunId::generate(),
+        agentloom_core::ids::RunId::generate(),
     )
     .await
     .unwrap();
@@ -505,7 +505,7 @@ async fn verifier_treo_khong_lam_dung_ca_luot_chay() {
             ..Default::default()
         },
         log,
-        agentgraph_core::ids::RunId::generate(),
+        agentloom_core::ids::RunId::generate(),
     )
     .await
     .unwrap();
@@ -544,7 +544,7 @@ async fn verifier_het_gio_thi_tien_trinh_con_cung_bi_giet() {
             ..Default::default()
         },
         log,
-        agentgraph_core::ids::RunId::generate(),
+        agentloom_core::ids::RunId::generate(),
     )
     .await
     .unwrap();
@@ -712,7 +712,7 @@ isolate = "shared"
         ),
     )
     .await;
-    let mut v = agentgraph_core::view::View::default();
+    let mut v = agentloom_core::view::View::default();
     for e in &ev {
         v.apply(e);
     }
@@ -755,7 +755,7 @@ async fn huy_giua_chung_giet_tien_trinh_agent_khong_de_mo_coi() {
             ..Default::default()
         },
         log.clone(),
-        agentgraph_core::ids::RunId::generate(),
+        agentloom_core::ids::RunId::generate(),
     )
     .await
     .unwrap();
@@ -848,7 +848,7 @@ async fn huy_giua_chung_giet_ca_verifier_dang_chay() {
             ..Default::default()
         },
         log.clone(),
-        agentgraph_core::ids::RunId::generate(),
+        agentloom_core::ids::RunId::generate(),
     )
     .await
     .unwrap();
@@ -976,7 +976,7 @@ deps = ["a", "b"]
         "protocol của c phải cảnh báo đụng độ merge: {protocol_cua_c}"
     );
     assert!(
-        protocol_cua_c.contains("ag/") && protocol_cua_c.contains("/b"),
+        protocol_cua_c.contains("al/") && protocol_cua_c.contains("/b"),
         "protocol phải nêu tên branch bị đụng độ: {protocol_cua_c}"
     );
 }
@@ -1087,7 +1087,61 @@ isolate = "shared"
     assert_eq!(s.done, 4, "cha + 3 con");
     let con = ev
         .iter()
-        .filter(|e| matches!(&e.kind, EventKind::NodeAdded { by, .. } if *by == agentgraph_core::event::Origin::Agent))
+        .filter(|e| matches!(&e.kind, EventKind::NodeAdded { by, .. } if *by == agentloom_core::event::Origin::Agent))
         .count();
     assert_eq!(con, 3);
+}
+
+/// Bug thật: graph đánh dấu node phía sau là "bỏ qua" ở bên trong nhưng không
+/// phát event nào. Mọi mặt hiển thị (TUI, web, replay, `runs`) đều fold từ
+/// event log, nên chúng thấy node đó "đang chờ" mãi mãi dù lượt chạy đã xong.
+/// Kiểm qua View — đúng thứ người dùng nhìn thấy — chứ không qua bộ đếm của graph.
+#[tokio::test]
+async fn node_bi_bo_qua_phai_hien_bo_qua_tren_giao_dien() {
+    let d = tmp();
+    let (_, ev) = run(
+        &d.0,
+        plan(
+            r#"
+goal = "g"
+[[node]]
+id = "a"
+title = "a"
+agent = "fake"
+task = "FAIL"
+isolate = "shared"
+
+[[node]]
+id = "b"
+title = "b"
+agent = "fake"
+task = "x"
+deps = ["a"]
+isolate = "shared"
+
+[[node]]
+id = "c"
+title = "c"
+agent = "fake"
+task = "y"
+deps = ["b"]
+isolate = "shared"
+"#,
+        ),
+    )
+    .await;
+    let mut v = agentloom_core::view::View::default();
+    for e in &ev {
+        v.apply(e);
+    }
+    assert_eq!(v.nodes["a"].state, "failed");
+    assert_eq!(v.nodes["b"].state, "skipped", "b phải hiện bỏ qua");
+    // Bỏ qua lan truyền: c phụ thuộc b đã bị bỏ qua.
+    assert_eq!(v.nodes["c"].state, "skipped", "c phải hiện bỏ qua");
+    // Người xem phải biết VÌ SAO bị bỏ qua, không chỉ thấy trạng thái.
+    assert!(
+        v.nodes["b"].lines.iter().any(|l| l.contains("a")),
+        "log của b phải nói lý do: {:?}",
+        v.nodes["b"].lines
+    );
 }

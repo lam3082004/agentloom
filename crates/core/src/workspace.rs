@@ -55,7 +55,7 @@ impl Worktrees {
             // Dọn đăng ký worktree trỏ vào thư mục đã bị xoá tay.
             let _ = git(&repo_root, &["worktree", "prune"]).await;
         }
-        let base = repo_root.join(".agentgraph").join("worktrees").join(run);
+        let base = repo_root.join(".agentloom").join("worktrees").join(run);
         Self {
             repo_root,
             base,
@@ -71,7 +71,7 @@ impl Worktrees {
         &self.repo_root
     }
     pub fn branch_of(&self, id: &NodeId) -> String {
-        format!("ag/{}/{id}", self.run)
+        format!("al/{}/{id}", self.run)
     }
 
     /// Tạo worktree cho node. Trả về thư mục agent sẽ chạy trong đó.
@@ -143,9 +143,9 @@ impl Worktrees {
             return Ok(false);
         }
         let p = self.base.join(id.as_str());
-        // Loại .agentgraph: nếu commit, file mutation sẽ theo branch merge
+        // Loại .agentloom: nếu commit, file mutation sẽ theo branch merge
         // sang node join và bị áp lại lần nữa.
-        let (_, _) = git(&p, &["add", "-A", "--", ".", ":!.agentgraph"]).await?;
+        let (_, _) = git(&p, &["add", "-A", "--", ".", ":!.agentloom"]).await?;
         let (ok, _) = git(&p, &["commit", "-m", msg]).await?;
         Ok(ok)
     }

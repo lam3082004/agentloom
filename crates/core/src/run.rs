@@ -37,9 +37,9 @@ fn protocol_block(store: &HarnessStore) -> String {
          Bạn đang chạy như một node trong một graph nhiều agent.\n\
          \n\
          KÊNH DUY NHẤT để nói chuyện với hệ điều phối là nối thêm dòng JSON vào\n\
-         `.agentgraph/mutations.jsonl` trong thư mục làm việc. Mỗi dòng một lệnh:\n\
+         `.agentloom/mutations.jsonl` trong thư mục làm việc. Mỗi dòng một lệnh:\n\
          \n\
-         mkdir -p .agentgraph && cat >> .agentgraph/mutations.jsonl <<'JSONL'\n\
+         mkdir -p .agentloom && cat >> .agentloom/mutations.jsonl <<'JSONL'\n\
          {\"op\":\"spawn\",\"id\":\"<ten-node>\",\"agent\":\"<claude hoac codex>\",\"task\":\"<viec>\",\"verify\":\"<lenh shell kiem chung>\"}\n\
          {\"op\":\"write_skill\",\"name\":\"<ten>\",\"body\":\"<quy trinh tai su dung>\"}\n\
          {\"op\":\"write_memory\",\"key\":\"<ten>\",\"value\":\"<noi dung>\"}\n\
@@ -135,7 +135,7 @@ impl Runner {
             ..limits
         };
         let worktrees = Worktrees::discover(&root, run.as_str()).await;
-        let store = HarnessStore::new(worktrees.repo_root().join(".agentgraph"));
+        let store = HarnessStore::new(worktrees.repo_root().join(".agentloom"));
         let (cancel_tx, cancel_guard) = tokio::sync::watch::channel(false);
         Ok(Self {
             graph: Graph::new(limits.max_nodes),
@@ -261,7 +261,24 @@ impl Runner {
         let mut cancel_noted = false;
 
         loop {
-            self.graph.refresh_ready();
+            let doi = self.graph.refresh_ready();
+            // Graph đổi trạng thái bên trong; không phát event thì TUI, web,
+            // replay và `runs` (đều fold từ event log) thấy node này "đang chờ"
+            // mãi mãi dù lượt chạy đã xong.
+            for (id, dep) in doi.skipped {
+                self.log.emit(
+                    Some(id.clone()),
+                    EventKind::NodeState {
+                        state: "skipped".into(),
+                    },
+                );
+                self.log.emit(
+                    Some(id),
+                    EventKind::Note {
+                        text: format!("bỏ qua vì agent trước '{dep}' không xong"),
+                    },
+                );
+            }
             // Đọc một lần mỗi vòng: `cancel_tx` có thể đổi bất cứ lúc nào từ
             // ngoài (CLI), nhưng vòng nạp node bên dưới chạy đồng bộ nên phải
             // chốt giá trị trước khi quyết định có nạp thêm hay không.
@@ -353,7 +370,7 @@ impl Runner {
                             if let Some(n) = self.graph.node_mut(&id) { n.session = o.session.clone(); }
                             if o.ok && self.worktrees.enabled() && self.worktrees.has_changes(&id).await {
                                 let _ = self.worktrees
-                                    .commit_all(&id, &format!("agentgraph: {id}"))
+                                    .commit_all(&id, &format!("agentloom: {id}"))
                                     .await;
                             }
                             let mut ok = o.ok;
@@ -749,7 +766,7 @@ mod tests {
             "phải dạy agent kèm verify khi spawn"
         );
         assert!(
-            p.contains(".agentgraph/mutations.jsonl"),
+            p.contains(".agentloom/mutations.jsonl"),
             "phải chỉ rõ kênh duy nhất được đọc"
         );
         std::fs::remove_dir_all(d).ok();

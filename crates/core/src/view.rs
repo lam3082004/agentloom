@@ -38,7 +38,22 @@ pub struct NodeView {
     /// Không lấy ghi chú hệ thống (rate limit, verifier) vì chúng lặp liên tục
     /// và che mất hoạt động thật của agent.
     pub last: String,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
 }
+
+/// Một dòng trong luồng hoạt động chung của mọi agent — thứ dashboard dùng để
+/// trả lời "chúng nó đang làm gì", xếp theo thời gian thật của event.
+#[derive(Debug, Clone, Serialize)]
+pub struct FeedItem {
+    pub at_ms: i64,
+    pub node: String,
+    pub line: String,
+}
+
+/// Trần số dòng feed giữ lại. Feed nằm trong mọi ảnh chụp `View`; không có
+/// trần thì phiên dài làm mỗi lần mở trang phải tải cả lịch sử.
+const FEED_MAX: usize = 500;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct View {
@@ -54,6 +69,25 @@ pub struct View {
     pub ok: bool,
     pub total_cost: f64,
     pub mutations_rejected: usize,
+    /// Mili-giây Unix lúc lượt chạy bắt đầu / kết thúc — cho đồng hồ tổng.
+    pub started_ms: Option<i64>,
+    pub finished_ms: Option<i64>,
+    pub feed: Vec<FeedItem>,
+    /// Thời điểm của event đang được fold; `push` dùng để đóng dấu feed.
+    #[serde(skip)]
+    now_ms: i64,
+    /// Tổng số dòng từng vào feed, kể cả dòng đã bị cắt vì trần — để biết
+    /// chính xác một event vừa thêm những dòng feed nào.
+    #[serde(skip)]
+    feed_seq: u64,
+}
+
+/// Những gì một event vừa thêm vào view — phần mặt web cần đẩy xuống.
+#[derive(Debug, Clone, Default)]
+pub struct Tracked {
+    pub node: Option<String>,
+    pub lines: Vec<String>,
+    pub feed: Vec<FeedItem>,
 }
 
 impl View {
@@ -61,20 +95,27 @@ impl View {
     /// những dòng nào. Mặt web dùng cái này để client không phải tự diễn giải
     /// event — nó chỉ ghép dữ liệu đã fold sẵn, nên không có bản fold thứ hai
     /// để lệch.
-    pub fn apply_tracked(&mut self, ev: &Event) -> (Option<String>, Vec<String>) {
+    pub fn apply_tracked(&mut self, ev: &Event) -> Tracked {
         let id = ev.node.as_ref().map(|n| n.to_string());
         let before = id
             .as_ref()
             .and_then(|i| self.nodes.get(i))
             .map(|n| n.lines.len())
             .unwrap_or(0);
+        let seq_before = self.feed_seq;
         self.apply(ev);
-        let appended = id
+        let lines = id
             .as_ref()
             .and_then(|i| self.nodes.get(i))
             .map(|n| n.lines[before.min(n.lines.len())..].to_vec())
             .unwrap_or_default();
-        (id, appended)
+        let moi = ((self.feed_seq - seq_before) as usize).min(self.feed.len());
+        let feed = self.feed[self.feed.len() - moi..].to_vec();
+        Tracked {
+            node: id,
+            lines,
+            feed,
+        }
     }
 
     /// Ảnh chụp gọn: mọi thứ trừ log. Đủ để vẽ danh sách node và thanh
@@ -101,18 +142,27 @@ impl View {
                     last: n.last.clone(),
                     summary: n.summary.clone(),
                     started_ms: n.started_ms,
+                    tokens_in: n.tokens_in,
+                    tokens_out: n.tokens_out,
                 })
                 .collect(),
             total_cost: self.total_cost,
             finished: self.finished,
+            ok: self.ok,
             mutations_rejected: self.mutations_rejected,
+            started_ms: self.started_ms,
+            finished_ms: self.finished_ms,
         }
     }
 
     pub fn apply(&mut self, ev: &Event) {
         let node = ev.node.as_ref().map(|n| n.to_string());
+        self.now_ms = ev.at.timestamp_millis();
         match &ev.kind {
-            EventKind::RunStarted { goal, .. } => self.goal = goal.clone(),
+            EventKind::RunStarted { goal, .. } => {
+                self.goal = goal.clone();
+                self.started_ms = Some(self.now_ms);
+            }
             EventKind::NodeAdded {
                 title,
                 agent,
@@ -142,11 +192,14 @@ impl View {
                         model: model.clone(),
                         workspace: None,
                         last: String::new(),
+                        tokens_in: 0,
+                        tokens_out: 0,
                     },
                 );
             }
             EventKind::NodeState { state } => {
-                if let Some(n) = node.and_then(|i| self.nodes.get_mut(&i)) {
+                let bat_dau = state == "running";
+                if let Some(n) = node.as_ref().and_then(|i| self.nodes.get_mut(i)) {
                     n.state = state.clone();
                     if state == "running" {
                         n.started = Some(ev.at);
@@ -157,6 +210,9 @@ impl View {
                             n.elapsed_s = (ev.at - start).num_seconds().max(0) as u64;
                         }
                     }
+                }
+                if bat_dau {
+                    self.push(node, "▶ bắt đầu chạy".into());
                 }
             }
             EventKind::AgentText { text } => self.activity(node, format!("· {text}")),
@@ -178,15 +234,19 @@ impl View {
                 ok,
                 cost_usd,
                 summary,
+                tokens_in,
+                tokens_out,
                 ..
             } => {
                 self.total_cost += cost_usd;
-                if let Some(n) = node.and_then(|i| self.nodes.get_mut(&i)) {
+                if let Some(n) = node.as_ref().and_then(|i| self.nodes.get_mut(i)) {
                     n.cost = *cost_usd;
                     n.summary = summary.clone();
-                    n.lines
-                        .push(format!("{} {}", if *ok { "✓" } else { "✕" }, summary));
+                    n.tokens_in = *tokens_in;
+                    n.tokens_out = *tokens_out;
                 }
+                // Qua `push` để kết quả xong/hỏng vào cả feed, không chỉ log node.
+                self.push(node, format!("{} {}", if *ok { "✓" } else { "✕" }, summary));
             }
             EventKind::Mutation {
                 op,
@@ -206,6 +266,7 @@ impl View {
             }
             EventKind::RunFinished { total_cost_usd, ok } => {
                 self.finished = true;
+                self.finished_ms = Some(self.now_ms);
                 self.total_cost = *total_cost_usd;
                 self.ok = *ok;
             }
@@ -231,11 +292,28 @@ impl View {
     }
 
     fn push(&mut self, node: Option<String>, line: String) {
-        if let Some(n) = node.and_then(|i| self.nodes.get_mut(&i)) {
-            n.lines.push(line);
-            // Giữ trần bộ nhớ: phiên dài có thể sinh rất nhiều dòng.
-            if n.lines.len() > 2000 {
-                n.lines.drain(0..500);
+        let Some(id) = node else { return };
+        let Some(n) = self.nodes.get_mut(&id) else {
+            return;
+        };
+        // Ghi chú rate limit đến sau MỖI lượt model trả lời — vào feed chung
+        // thì nó nhấn chìm hoạt động thật của mọi agent. Vẫn giữ trong log node.
+        let vao_feed = !line.starts_with("i rate limit");
+        n.lines.push(line.clone());
+        // Giữ trần bộ nhớ: phiên dài có thể sinh rất nhiều dòng.
+        if n.lines.len() > 2000 {
+            n.lines.drain(0..500);
+        }
+        if vao_feed {
+            self.feed.push(FeedItem {
+                at_ms: self.now_ms,
+                node: id,
+                line,
+            });
+            self.feed_seq += 1;
+            if self.feed.len() > FEED_MAX {
+                let du = self.feed.len() - FEED_MAX;
+                self.feed.drain(0..du);
             }
         }
     }
@@ -265,7 +343,10 @@ pub struct ViewMeta {
     pub nodes: Vec<NodeMeta>,
     pub total_cost: f64,
     pub finished: bool,
+    pub ok: bool,
     pub mutations_rejected: usize,
+    pub started_ms: Option<i64>,
+    pub finished_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -285,6 +366,8 @@ pub struct NodeMeta {
     /// Mili-giây Unix lúc node bắt đầu chạy — để giao diện tự đếm giây khi node
     /// còn đang chạy (`elapsed_s` chỉ có sau khi node kết thúc).
     pub started_ms: Option<i64>,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
 }
 
 /// Một lần cập nhật đẩy xuống trình duyệt.
@@ -295,6 +378,9 @@ pub struct Patch {
     pub node: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub lines: Vec<String>,
+    /// Dòng mới của luồng hoạt động chung — đã lọc sẵn ở server.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub feed: Vec<FeedItem>,
 }
 
 #[cfg(test)]
@@ -335,22 +421,167 @@ mod tests {
                 model: None,
             },
         ));
-        let (n1, l1) = v.apply_tracked(&ev(
+        let t1 = v.apply_tracked(&ev(
             3,
             Some("a"),
             EventKind::AgentText {
                 text: "một".into()
             },
         ));
-        assert_eq!(n1.as_deref(), Some("a"));
-        assert_eq!(l1, vec!["· một".to_string()]);
-        let (_, l2) = v.apply_tracked(&ev(
+        assert_eq!(t1.node.as_deref(), Some("a"));
+        assert_eq!(t1.lines, vec!["· một".to_string()]);
+        let t2 = v.apply_tracked(&ev(
             4,
             Some("a"),
             EventKind::AgentText { text: "hai".into() },
         ));
-        assert_eq!(l2, vec!["· hai".to_string()], "không được trả lại dòng cũ");
+        assert_eq!(
+            t2.lines,
+            vec!["· hai".to_string()],
+            "không được trả lại dòng cũ"
+        );
         assert_eq!(v.nodes["a"].lines.len(), 2);
+    }
+
+    fn them_node(v: &mut View, id: &str) {
+        v.apply(&ev(
+            1,
+            Some(id),
+            EventKind::NodeAdded {
+                title: id.into(),
+                agent: "fake".into(),
+                deps: vec![],
+                by: Origin::Plan,
+                model: None,
+            },
+        ));
+    }
+
+    /// Dashboard trả lời "chúng nó đang làm gì" bằng một luồng chung của MỌI
+    /// agent. Kết quả xong/hỏng và lúc bắt đầu cũng phải vào đó — không chỉ
+    /// dòng tool — nếu không feed kể chuyện thiếu đầu thiếu đuôi.
+    #[test]
+    fn feed_gom_hoat_dong_cua_moi_node_ke_ca_bat_dau_va_ket_qua() {
+        let mut v = View::default();
+        them_node(&mut v, "a");
+        them_node(&mut v, "b");
+        v.apply(&ev(
+            2,
+            Some("a"),
+            EventKind::NodeState {
+                state: "running".into(),
+            },
+        ));
+        v.apply(&ev(
+            3,
+            Some("b"),
+            EventKind::AgentTool {
+                name: "Edit".into(),
+                detail: "x.rs".into(),
+            },
+        ));
+        v.apply(&ev(
+            4,
+            Some("a"),
+            EventKind::NodeFinished {
+                ok: true,
+                cost_usd: 0.1,
+                tokens_in: 1200,
+                tokens_out: 34,
+                summary: "xong việc".into(),
+                session: None,
+            },
+        ));
+        let dong: Vec<(String, String)> = v
+            .feed
+            .iter()
+            .map(|f| (f.node.clone(), f.line.clone()))
+            .collect();
+        assert_eq!(
+            dong,
+            vec![
+                ("a".to_string(), "▶ bắt đầu chạy".to_string()),
+                ("b".to_string(), "→ Edit x.rs".to_string()),
+                ("a".to_string(), "✓ xong việc".to_string()),
+            ]
+        );
+        assert!(
+            v.feed.iter().all(|f| f.at_ms > 0),
+            "mỗi dòng phải có thời điểm"
+        );
+        assert_eq!(v.nodes["a"].tokens_in, 1200);
+        assert_eq!(v.nodes["a"].tokens_out, 34);
+    }
+
+    #[test]
+    fn rate_limit_khong_nhan_chim_feed_nhung_van_o_log_node() {
+        let mut v = View::default();
+        them_node(&mut v, "a");
+        v.apply(&ev(
+            2,
+            Some("a"),
+            EventKind::Note {
+                text: "rate limit 5h đã dùng 0.4".into(),
+            },
+        ));
+        assert!(v.feed.is_empty(), "{:?}", v.feed);
+        assert_eq!(v.nodes["a"].lines.len(), 1);
+    }
+
+    #[test]
+    fn feed_co_tran_va_apply_tracked_tra_dung_dong_moi_ke_ca_khi_bi_cat() {
+        let mut v = View::default();
+        them_node(&mut v, "a");
+        for i in 0..(FEED_MAX + 50) {
+            v.apply(&ev(
+                2,
+                Some("a"),
+                EventKind::AgentText {
+                    text: format!("dòng {i}"),
+                },
+            ));
+        }
+        assert_eq!(v.feed.len(), FEED_MAX);
+        // Sau khi feed đã chạm trần, một event mới vẫn phải trả về đúng dòng của nó.
+        let t = v.apply_tracked(&ev(
+            3,
+            Some("a"),
+            EventKind::AgentText {
+                text: "mới nhất".into(),
+            },
+        ));
+        assert_eq!(t.feed.len(), 1);
+        assert_eq!(t.feed[0].line, "· mới nhất");
+        assert_eq!(v.feed.last().unwrap().line, "· mới nhất");
+    }
+
+    #[test]
+    fn dong_ho_tong_cua_luot_chay() {
+        let mut v = View::default();
+        let t0 = Utc::now();
+        let mut e1 = ev(
+            1,
+            None,
+            EventKind::RunStarted {
+                goal: "g".into(),
+                run: crate::ids::RunId::generate(),
+            },
+        );
+        e1.at = t0;
+        v.apply(&e1);
+        let mut e2 = ev(
+            2,
+            None,
+            EventKind::RunFinished {
+                ok: true,
+                total_cost_usd: 0.0,
+            },
+        );
+        e2.at = t0 + chrono::Duration::seconds(90);
+        v.apply(&e2);
+        let m = v.meta();
+        assert_eq!(m.finished_ms.unwrap() - m.started_ms.unwrap(), 90_000);
+        assert!(m.ok);
     }
 
     #[test]

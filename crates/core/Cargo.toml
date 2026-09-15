@@ -1,5 +1,5 @@
 [package]
-name = "agentgraph-core"
+name = "agentloom-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

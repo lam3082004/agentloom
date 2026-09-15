@@ -165,7 +165,7 @@ impl AgentAdapter for CodexAdapter {
     }
 }
 
-/// Codex luôn in dòng này ra stderr khi không có stdin (agentgraph đóng hẳn
+/// Codex luôn in dòng này ra stderr khi không có stdin (agentloom đóng hẳn
 /// stdin — xem `stdin(Stdio::null())` ở trên) — vô hại, không phải lỗi. Web
 /// và TUI tô đỏ mọi dòng `AgentRaw{stream:"stderr"}`, nên dòng này trông như
 /// một lỗi thật dù không phải. Chỉ lọc đúng dòng này, không lọc rộng hơn: mọi

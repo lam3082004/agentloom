@@ -1,6 +1,6 @@
 //! Màn hình live: cây graph bên trái, log của node đang chọn bên phải.
 
-use agentgraph_core::view::View;
+use agentloom_core::view::View;
 use crossterm::event::{self as cev, Event as CEvent, KeyCode, KeyModifiers};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
@@ -84,7 +84,7 @@ impl Ui {
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
-                    " agentgraph ",
+                    " agentloom ",
                     Style::new().bold().bg(Color::Blue).fg(Color::White),
                 ),
                 Span::raw(" "),
@@ -219,8 +219,8 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentgraph_core::event::{Event, EventKind, Origin};
-    use agentgraph_core::ids::NodeId;
+    use agentloom_core::event::{Event, EventKind, Origin};
+    use agentloom_core::ids::NodeId;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 

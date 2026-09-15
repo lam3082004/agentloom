@@ -1,12 +1,12 @@
 mod tui;
 mod web;
 
-use agentgraph_core::agent::{AgentRequest, adapter_for, known_agents};
-use agentgraph_core::config::{Limits, Plan};
-use agentgraph_core::event::EventLog;
-use agentgraph_core::graph::{Isolate, NodeSpec};
-use agentgraph_core::ids::NodeId;
-use agentgraph_core::run::Runner;
+use agentloom_core::agent::{AgentRequest, adapter_for, known_agents};
+use agentloom_core::config::{Limits, Plan};
+use agentloom_core::event::EventLog;
+use agentloom_core::graph::{Isolate, NodeSpec};
+use agentloom_core::ids::NodeId;
+use agentloom_core::run::Runner;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use std::io::Write;
@@ -15,7 +15,7 @@ use std::time::Duration;
 
 #[derive(Parser)]
 #[command(
-    name = "agentgraph",
+    name = "agentloom",
     version,
     about = "Điều phối nhiều coding agent theo graph động"
 )]
@@ -84,9 +84,9 @@ enum Cmd {
         #[arg(long)]
         plain: bool,
     },
-    /// Liệt kê các lượt chạy trong `.agentgraph/runs/`, mới nhất trước.
+    /// Liệt kê các lượt chạy trong `.agentloom/runs/`, mới nhất trước.
     Runs {
-        /// Thư mục gốc chứa `.agentgraph/runs/` — mặc định thư mục hiện tại.
+        /// Thư mục gốc chứa `.agentloom/runs/` — mặc định thư mục hiện tại.
         #[arg(long, default_value = ".")]
         root: PathBuf,
     },
@@ -191,8 +191,8 @@ async fn run(
     port: u16,
 ) -> anyhow::Result<()> {
     let root = root.canonicalize().unwrap_or(root);
-    let run_id = agentgraph_core::ids::RunId::generate();
-    let dir = root.join(".agentgraph").join("runs").join(run_id.as_str());
+    let run_id = agentloom_core::ids::RunId::generate();
+    let dir = root.join(".agentloom").join("runs").join(run_id.as_str());
     let events = dir.join("events.jsonl");
     let log = EventLog::create(&events)?;
     let mut rx = log.subscribe();
@@ -239,7 +239,7 @@ async fn run(
                             Ok(ev) => {
                                 if matches!(
                                     ev.kind,
-                                    agentgraph_core::event::EventKind::RunFinished { .. }
+                                    agentloom_core::event::EventKind::RunFinished { .. }
                                 ) {
                                     break;
                                 }
@@ -297,7 +297,7 @@ async fn run(
                     }
                     if matches!(
                         ev.kind,
-                        agentgraph_core::event::EventKind::RunFinished { .. }
+                        agentloom_core::event::EventKind::RunFinished { .. }
                     ) {
                         break;
                     }
@@ -364,7 +364,7 @@ async fn replay(events: PathBuf, plain: bool, web: bool, port: u16) -> anyhow::R
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "xem-lai".into());
-        // .agentgraph/runs/<id>/events.jsonl → gốc project nằm trên ba cấp.
+        // .agentloom/runs/<id>/events.jsonl → gốc project nằm trên ba cấp.
         let root = run_dir
             .ancestors()
             .nth(3)
@@ -427,15 +427,15 @@ async fn ask(events: PathBuf, node: String, question: String, plain: bool) -> an
         }
         found = true;
         match &e.kind {
-            agentgraph_core::event::EventKind::NodeAdded { agent: a, .. } => {
+            agentloom_core::event::EventKind::NodeAdded { agent: a, .. } => {
                 agent = Some(a.clone());
             }
             // Node có thể được resume nhiều lần với worktree khác nhau chỉ
             // khi bị spawn lại — trong một lượt chạy, dòng cuối là đúng.
-            agentgraph_core::event::EventKind::Workspace { path, .. } => {
+            agentloom_core::event::EventKind::Workspace { path, .. } => {
                 cwd = Some(PathBuf::from(path));
             }
-            agentgraph_core::event::EventKind::NodeFinished { session: s, .. } if s.is_some() => {
+            agentloom_core::event::EventKind::NodeFinished { session: s, .. } if s.is_some() => {
                 session = s.clone();
             }
             _ => {}
@@ -468,7 +468,7 @@ async fn ask(events: PathBuf, node: String, question: String, plain: bool) -> an
         .unwrap_or_else(|| PathBuf::from("."));
     let ask_path = ask_dir.join(format!(
         "ask-{node}-{}.jsonl",
-        agentgraph_core::ids::RunId::generate()
+        agentloom_core::ids::RunId::generate()
     ));
     let log = EventLog::create(&ask_path)?;
     let mut rx = log.subscribe();
@@ -501,12 +501,12 @@ async fn ask(events: PathBuf, node: String, question: String, plain: bool) -> an
     Ok(())
 }
 
-/// Liệt kê `.agentgraph/runs/*/events.jsonl`, mới nhất trước. Dùng lại
+/// Liệt kê `.agentloom/runs/*/events.jsonl`, mới nhất trước. Dùng lại
 /// `View::apply` để fold — id run có tiền tố `%Y%m%d-%H%M%S` (xem
 /// `RunId::generate`) nên sắp xếp chuỗi cũng chính là sắp theo thời gian,
 /// không cần phân tích lại timestamp.
 async fn runs(root: PathBuf) -> anyhow::Result<()> {
-    let dir = root.join(".agentgraph").join("runs");
+    let dir = root.join(".agentloom").join("runs");
     let mut ids: Vec<String> = match std::fs::read_dir(&dir) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
@@ -530,14 +530,14 @@ async fn runs(root: PathBuf) -> anyhow::Result<()> {
         // Log hỏng hoặc lượt chạy chưa xong (không có run_finished, ví dụ
         // tiến trình bị kill -9) không được làm chết cả lệnh — hiện là dở
         // dang chứ không phải lỗi của `runs`.
-        let evs = match agentgraph_core::event::EventLog::replay(&events) {
+        let evs = match agentloom_core::event::EventLog::replay(&events) {
             Ok(evs) => evs,
             Err(_) => {
                 println!("{id:<24} (không đọc được log)");
                 continue;
             }
         };
-        let mut v = agentgraph_core::view::View::default();
+        let mut v = agentloom_core::view::View::default();
         for e in &evs {
             v.apply(e);
         }
@@ -579,7 +579,7 @@ async fn runs(root: PathBuf) -> anyhow::Result<()> {
 }
 
 async fn doctor() -> anyhow::Result<()> {
-    println!("agentgraph doctor\n");
+    println!("agentloom doctor\n");
     let mut missing = 0;
     for name in known_agents() {
         let Some(ad) = adapter_for(name) else {

@@ -1,18 +1,18 @@
-# agentgraph
+# agentloom
 
 Điều phối nhiều coding agent (**claude code**, **codex**) làm việc song song
 theo một **graph** — và cho phép chính các agent tự mọc thêm việc trong lúc
 chạy. Viết bằng Rust. Xem tiến độ bằng TUI trong terminal hoặc bằng trình duyệt.
 
-agentgraph **không tự gọi model**. Mỗi node là một tiến trình agent có sẵn chạy
-headless trên máy bạn. Việc của agentgraph là: **lập lịch** node nào chạy trước
+agentloom **không tự gọi model**. Mỗi node là một tiến trình agent có sẵn chạy
+headless trên máy bạn. Việc của agentloom là: **lập lịch** node nào chạy trước
 sau, **cô lập** mỗi agent trong một git worktree riêng, **kiểm chứng** kết quả
 bằng lệnh thật, và **ghi lại** mọi thứ để xem lại hoặc hỏi lại.
 
 ## Cách nhanh nhất: giao diện web
 
 ```bash
-agentgraph web
+agentloom web
 ```
 
 ```
@@ -21,6 +21,8 @@ web đang chạy: http://127.0.0.1:7878/?token=caf92286...
 
 Mở **đúng link đó** (có `?token=`) trong trình duyệt, rồi:
 
+Bấm **+ Chạy mới** ở góc trên, rồi trong hộp thoại:
+
 1. **Thư mục project** — nhập đường dẫn project cần làm việc. Ô bên dưới báo
    ngay nó có phải git repo đã có commit chưa.
 2. **Agent chính** — `claude` hoặc `codex`.
@@ -28,14 +30,30 @@ Mở **đúng link đó** (có `?token=`) trong trình duyệt, rồi:
 4. **Prompt** — viết việc cần làm cho **một** agent chính.
 5. Bấm **Chạy**.
 
-Agent chính có thể tự giao việc cho agent con. Graph mọc thêm ngay trên màn
-hình: node đang chạy nhấp nháy và hiện việc agent đang làm, mũi tên nối node
-cha với node con, dấu `⚙` đánh dấu node do agent tự tạo. Bấm vào một node để
-xem agent, model, thư mục worktree, chi phí và log trực tiếp. Nút **Dừng** huỷ
-cả lượt chạy.
+Agent chính có thể tự giao việc cho agent con. Dashboard chia làm bốn vùng:
+
+```
+┌ agentloom  ▾lượt chạy  ● ĐANG CHẠY  mục tiêu…   0:42 · 3 đang chạy · 2 xong · 1 hỏng · $0.31  [■ Dừng] ┐
+├─ AGENTS ───────────┬─ GRAPH ───────────────────────────────────────┬─ CHI TIẾT AGENT ─┤
+│ ai đang chạy đứng  │  thẻ agent ──▶ thẻ agent ──▶ thẻ agent          │ model · thời gian │
+│ đầu, kèm việc đang │           ╰──▶ thẻ agent                        │ chi phí · token   │
+│ làm và đồng hồ     ├─ HOẠT ĐỘNG TRỰC TIẾP ───────────────────────────┤ thư mục worktree  │
+│                    │ 12:04:31  sua-api  → Edit src/api.rs            │ log đầy đủ        │
+└────────────────────┴─────────────────────────────────────────────────┴───────────────────┘
+```
+
+- **Thanh trên**: trạng thái lượt chạy, đồng hồ tổng, số agent theo trạng thái, chi phí, nút **Dừng**.
+- **Agents**: mọi agent, người đang chạy xếp lên đầu, kèm việc đang làm.
+- **Graph**: mỗi agent một thẻ (badge `C` claude, `X` codex), mũi tên nối agent với
+  agent nó phụ thuộc, `⚙` đánh dấu agent do agent khác tự tạo. Kéo để di chuyển,
+  cuộn để zoom, nút `⤢` để vừa khung.
+- **Hoạt động trực tiếp**: mọi việc của mọi agent theo thời gian, mới nhất lên đầu;
+  tích "chỉ agent đang chọn" để lọc.
+- **Chi tiết agent**: bấm một thẻ hoặc một dòng để xem model, thời gian, chi phí,
+  token, thư mục worktree (có nút chép) và log đầy đủ.
 
 > Đừng mở thẳng file `crates/cli/assets/index.html` — trang cần server phía
-> sau và sẽ báo "không nối được tới agentgraph". Luôn mở link server in ra.
+> sau và sẽ báo "không nối được tới agentloom". Luôn mở link server in ra.
 
 Muốn lặp lại cùng một quy trình, hay chạy trong CI, thì viết plan TOML — xem
 [mục 3](#3-lượt-chạy-đầu-tiên-từng-bước) trở đi.
@@ -68,23 +86,23 @@ Muốn lặp lại cùng một quy trình, hay chạy trong CI, thì viết plan
 `codex` đã đăng nhập sẵn.
 
 ```bash
-git clone https://github.com/lam3082004/agentgraph.git
-cd agentgraph
+git clone https://github.com/lam3082004/agentloom.git
+cd agentloom
 cargo install --path crates/cli --locked
 ```
 
-Lệnh trên đặt binary `agentgraph` vào `~/.cargo/bin`.
+Lệnh trên đặt binary `agentloom` vào `~/.cargo/bin`.
 
 > **Lỗi hay gặp:** `cargo build --release` **không** cài gì vào `PATH` — nó chỉ
-> tạo file `target/release/agentgraph`. Gõ `agentgraph` sau lệnh đó sẽ báo
+> tạo file `target/release/agentloom`. Gõ `agentloom` sau lệnh đó sẽ báo
 > `command not found`. Dùng `cargo install` như trên, hoặc gọi thẳng
-> `./target/release/agentgraph`.
+> `./target/release/agentloom`.
 
 Kiểm tra `~/.cargo/bin` đã nằm trong `PATH` chưa, rồi chạy `doctor`:
 
 ```bash
 echo "$PATH" | tr ':' '\n' | grep cargo     # phải thấy .../.cargo/bin
-agentgraph doctor
+agentloom doctor
 ```
 
 ```
@@ -108,10 +126,10 @@ project mà bạn định cho agent làm việc**.
 | **Plan** | File TOML liệt kê các việc (node) và việc nào phải đợi việc nào. Đó là điểm xuất phát — graph thật có thể mọc thêm. |
 | **Node** | Một việc, giao cho **một** agent (`claude` hoặc `codex`). |
 | **Dep** | `deps = ["a"]` nghĩa là node này chỉ chạy khi `a` đã **xong**. Nhiều node không phụ thuộc nhau thì chạy **song song**. |
-| **Worktree** | Mỗi node làm việc trên một bản sao riêng của repo, trên branch `ag/<run-id>/<node>`. Agent song song không bao giờ đè file của nhau. Node có dep được **merge sẵn** công việc của các dep trước khi chạy. |
+| **Worktree** | Mỗi node làm việc trên một bản sao riêng của repo, trên branch `al/<run-id>/<node>`. Agent song song không bao giờ đè file của nhau. Node có dep được **merge sẵn** công việc của các dep trước khi chạy. |
 | **Verify** | Lệnh shell chạy sau khi agent xong. Thoát `0` thì node **xong**; khác `0` thì node **hỏng** — bất kể agent nói gì. |
 
-Và một điều khiến agentgraph là "động": **agent đang chạy có thể tự spawn node
+Và một điều khiến agentloom là "động": **agent đang chạy có thể tự spawn node
 mới** (giao việc cho agent khác), **ghi quy trình** để lần sau dùng lại, và
 **ghi memory**. Mọi đề nghị đều được validate trước khi áp dụng.
 
@@ -122,14 +140,14 @@ mới** (giao việc cho agent khác), **ghi quy trình** để lần sau dùng 
 Ví dụ: một project Python có hàm bị sai, muốn agent sửa và **chứng minh** đã sửa
 đúng.
 
-### Bước 1 — Đứng trong project của bạn, không phải trong repo agentgraph
+### Bước 1 — Đứng trong project của bạn, không phải trong repo agentloom
 
 ```bash
 cd ~/code/project-cua-ban
 ```
 
-> Chạy `agentgraph run` bên trong chính repo agentgraph sẽ tạo worktree và
-> branch `ag/*` ngay trong repo đó. Luôn chạy trong project cần làm việc.
+> Chạy `agentloom run` bên trong chính repo agentloom sẽ tạo worktree và
+> branch `al/*` ngay trong repo đó. Luôn chạy trong project cần làm việc.
 
 ### Bước 2 — Project phải là git repo có ít nhất một commit
 
@@ -168,7 +186,7 @@ verify = "python3 -c 'from calc import add; assert add(2, 3) == 5'"
 ### Bước 4 — Chạy
 
 ```bash
-agentgraph run plan.toml --permission-mode bypassPermissions
+agentloom run plan.toml --permission-mode bypassPermissions
 ```
 
 Vì sao cần `bypassPermissions`: ở chế độ mặc định `acceptEdits`, claude chạy
@@ -193,15 +211,15 @@ Khi thanh dưới hiện `XONG`, bấm `q` để thoát. Terminal in tổng kế
 
 ```
 OK · 1 xong · 0 hỏng · 0 bỏ qua · $0.07
-event log: /…/project-cua-ban/.agentgraph/runs/20260915-101500-a1b2c3/events.jsonl
+event log: /…/project-cua-ban/.agentloom/runs/20260915-101500-a1b2c3/events.jsonl
 ```
 
 ### Bước 6 — Xem agent đã sửa gì, rồi đưa vào code
 
 ```bash
-git branch --list 'ag/*'
-git diff HEAD...ag/20260915-101500-a1b2c3/sua-add
-git merge --no-ff ag/20260915-101500-a1b2c3/sua-add
+git branch --list 'al/*'
+git diff HEAD...al/20260915-101500-a1b2c3/sua-add
+git merge --no-ff al/20260915-101500-a1b2c3/sua-add
 ```
 
 Chi tiết ở [mục 6](#6-đưa-công-việc-của-agent-vào-code-của-bạn).
@@ -228,7 +246,7 @@ isolate = "worktree"     # tuỳ chọn. "worktree" (mặc định) | "shared"
 ```
 
 **Quy tắc thứ tự:** không cần viết node theo thứ tự — node con khai báo trước
-node cha vẫn chạy đúng. agentgraph từ chối cả plan nếu có id trùng, dep trỏ tới
+node cha vẫn chạy đúng. agentloom từ chối cả plan nếu có id trùng, dep trỏ tới
 node không tồn tại, hoặc dep tạo vòng tròn, và báo rõ lý do.
 
 **Khi node hỏng:** mọi node phụ thuộc nó (trực tiếp hay gián tiếp) bị **bỏ qua**
@@ -241,7 +259,7 @@ ghi cùng file.
 ### Chạy nhanh một việc, không cần file plan
 
 ```bash
-agentgraph run --goal "Sửa test đang đỏ trong tests/test_api.py" --agent claude \
+agentloom run --goal "Sửa test đang đỏ trong tests/test_api.py" --agent claude \
   --permission-mode bypassPermissions
 ```
 
@@ -271,25 +289,26 @@ Có hai cách mở giao diện web:
 
 | Lệnh | Dùng khi |
 | --- | --- |
-| `agentgraph web` | muốn **chạy từ trình duyệt**: gõ prompt, chọn agent/model/thư mục, bấm Chạy. Một server giữ được nhiều lượt chạy, chọn qua ô trên cùng |
-| `agentgraph run plan.toml --web` | đã có plan và chỉ muốn **xem** lượt chạy đó trong trình duyệt thay vì TUI |
+| `agentloom web` | muốn **chạy từ trình duyệt**: gõ prompt, chọn agent/model/thư mục, bấm Chạy. Một server giữ được nhiều lượt chạy, chọn qua ô trên cùng |
+| `agentloom run plan.toml --web` | đã có plan và chỉ muốn **xem** lượt chạy đó trong trình duyệt thay vì TUI |
 
 ```bash
-agentgraph web --port 7878 --root ~/code/project-cua-ban
+agentloom web --port 7878 --root ~/code/project-cua-ban
 ```
 
 Server in ra link có `?token=` — mở đúng link đó. Graph xong, trang **vẫn mở**
 để xem lại; `Ctrl-C` trong terminal để tắt server. Mỗi lần khởi động là một
 token mới, nên link cũ hết tác dụng. Server chỉ lắng nghe `127.0.0.1`.
 
-Trên graph: khung vàng nhấp nháy là agent đang chạy (kèm số giây và việc nó
-đang làm), xanh lá là xong, đỏ là hỏng; mũi tên nét đứt chuyển động là việc
-đang được chuyển cho node đang chạy.
+Trên graph: viền xanh dương có vạch chạy là agent đang làm việc (kèm đồng hồ và
+việc nó đang làm), xanh lá là xong, đỏ là hỏng, mờ là bị bỏ qua vì agent trước
+hỏng; mũi tên nét đứt chuyển động trỏ vào agent đang chạy. Dashboard theo giao
+diện sáng/tối của hệ điều hành.
 
 ### Chạy trong CI hoặc pipe
 
 ```bash
-agentgraph run plan.toml --plain | tee run.jsonl
+agentloom run plan.toml --plain | tee run.jsonl
 ```
 
 Mỗi dòng là một event JSON. Exit code `0` khi mọi node xong, `1` khi có lỗi.
@@ -297,10 +316,10 @@ Mỗi dòng là một event JSON. Exit code `0` khi mọi node xong, `1` khi có
 ### Xem lại lượt cũ
 
 ```bash
-agentgraph runs                                          # liệt kê, mới nhất trước
-agentgraph replay .agentgraph/runs/<run-id>/events.jsonl # mở lại trong TUI
-agentgraph replay .agentgraph/runs/<run-id>/events.jsonl --web
-agentgraph replay .agentgraph/runs/<run-id>/events.jsonl --plain
+agentloom runs                                          # liệt kê, mới nhất trước
+agentloom replay .agentloom/runs/<run-id>/events.jsonl # mở lại trong TUI
+agentloom replay .agentloom/runs/<run-id>/events.jsonl --web
+agentloom replay .agentloom/runs/<run-id>/events.jsonl --plain
 ```
 
 ```
@@ -315,20 +334,20 @@ ngân sách. `DỞ DANG` là lượt chạy không có dòng kết thúc (tiến
 
 ## 6. Đưa công việc của agent vào code của bạn
 
-agentgraph **không bao giờ tự merge vào branch của bạn**. Mỗi node xong sạch có
-thay đổi thì được commit lên branch riêng `ag/<run-id>/<node>`. Bạn quyết định
+agentloom **không bao giờ tự merge vào branch của bạn**. Mỗi node xong sạch có
+thay đổi thì được commit lên branch riêng `al/<run-id>/<node>`. Bạn quyết định
 lấy gì.
 
 ```bash
 # 1. Xem có những branch nào
-git branch --list 'ag/*'
+git branch --list 'al/*'
 
 # 2. Xem một node đã làm gì
-git log --oneline HEAD..ag/<run-id>/<node>
-git diff HEAD...ag/<run-id>/<node>
+git log --oneline HEAD..al/<run-id>/<node>
+git diff HEAD...al/<run-id>/<node>
 
 # 3. Lấy vào branch hiện tại
-git merge --no-ff ag/<run-id>/<node>
+git merge --no-ff al/<run-id>/<node>
 ```
 
 **Mẹo với graph có node gộp:** node có dep đã chứa sẵn công việc của mọi dep.
@@ -338,7 +357,7 @@ cả ba — nhưng chỉ khi `review` **xong** (verify xanh).
 **Chỉ lấy một phần:**
 
 ```bash
-git checkout ag/<run-id>/<node> -- src/duong/dan/file.rs
+git checkout al/<run-id>/<node> -- src/duong/dan/file.rs
 ```
 
 ---
@@ -349,7 +368,7 @@ Mỗi node lưu session của agent. `ask` **tiếp tục đúng cuộc trò chu
 trong đúng worktree cũ — agent còn nhớ nó đã đọc gì, sửa gì, vì sao.
 
 ```bash
-agentgraph ask .agentgraph/runs/<run-id>/events.jsonl sua-add \
+agentloom ask .agentloom/runs/<run-id>/events.jsonl sua-add \
   "Vì sao bạn chọn sửa ở calc.py chứ không phải ở chỗ gọi hàm?"
 ```
 
@@ -474,7 +493,7 @@ verify = "pytest -q services/users"
 ```
 
 ```bash
-agentgraph run plan.toml --parallel 3 --budget 3 --permission-mode bypassPermissions
+agentloom run plan.toml --parallel 3 --budget 3 --permission-mode bypassPermissions
 ```
 
 Mỗi service một branch riêng: service nào hỏng không kéo theo service khác, và
@@ -509,7 +528,7 @@ verify = "cargo test -q login"
 ```
 
 Nếu `soi` viết được test làm `verify` đỏ, node hỏng — đó chính là tín hiệu có
-lỗ hổng thật. Dùng `agentgraph ask` hỏi `soi` chi tiết, rồi hỏi `lam` để sửa.
+lỗ hổng thật. Dùng `agentloom ask` hỏi `soi` chi tiết, rồi hỏi `lam` để sửa.
 
 ### Công thức 5 — Để agent tự chia việc (graph động)
 
@@ -561,7 +580,7 @@ Xong việc, ghi lại quy trình bạn vừa dùng thành một skill tên `the
 verify = "cargo test -q health"
 ```
 
-Quy trình được lưu ở `.agentgraph/skills/them-endpoint.md` trong project. **Mọi
+Quy trình được lưu ở `.agentloom/skills/them-endpoint.md` trong project. **Mọi
 lượt chạy sau** trên project này đều tự nạp skill cho mọi agent — tối đa 8
 skill, xếp theo tên file. Mở file ra đọc và sửa tay thoải mái — nó là markdown
 thường; xoá bớt skill cũ nếu có quá 8.
@@ -583,7 +602,7 @@ mà agent bị chặn quyền, không làm được gì, nhưng vẫn báo thàn
 
 - Chạy trong worktree của node, bằng `sh -c` (Linux/macOS) hoặc `cmd /C` (Windows).
 - Có cùng timeout với node (`--timeout-min`); treo quá hạn là hỏng.
-- Không có `verify` thì agentgraph chỉ còn tin lời agent — và ghi rõ điều đó vào log.
+- Không có `verify` thì agentloom chỉ còn tin lời agent — và ghi rõ điều đó vào log.
 - **Đừng để chính agent viết `verify` cho việc của nó** mà không đọc lại — agent
   có thể viết một lệnh luôn xanh.
 
@@ -594,7 +613,7 @@ mà agent bị chặn quyền, không làm được gì, nhưng vẫn báo thàn
 ### Chi phí
 
 ```bash
-agentgraph run plan.toml --budget 5 --parallel 2 --timeout-min 20
+agentloom run plan.toml --budget 5 --parallel 2 --timeout-min 20
 ```
 
 - `--budget` (mặc định `20` USD): chạm trần thì **không nạp thêm node mới**; node
@@ -635,31 +654,31 @@ Cờ này áp cho **claude**. **codex** luôn chạy với sandbox `workspace-wr
 
 ## 11. Dọn dẹp
 
-agentgraph **không tự xoá** worktree và branch sau khi chạy — để bạn còn
-review, merge và `ask`. Chúng tích luỹ dần trong `.agentgraph/worktrees/`.
+agentloom **không tự xoá** worktree và branch sau khi chạy — để bạn còn
+review, merge và `ask`. Chúng tích luỹ dần trong `.agentloom/worktrees/`.
 
 Dọn **một lượt chạy** (sau khi đã merge xong):
 
 ```bash
 RUN=20260915-101500-a1b2c3
-for w in .agentgraph/worktrees/$RUN/*/; do git worktree remove --force "$w"; done
+for w in .agentloom/worktrees/$RUN/*/; do git worktree remove --force "$w"; done
 git worktree prune
-git branch --list "ag/$RUN/*" | tr -d ' +*' | xargs -r git branch -D
+git branch --list "al/$RUN/*" | tr -d ' +*' | xargs -r git branch -D
 ```
 
 Dọn **tất cả**:
 
 ```bash
-for w in .agentgraph/worktrees/*/*/; do git worktree remove --force "$w"; done
+for w in .agentloom/worktrees/*/*/; do git worktree remove --force "$w"; done
 git worktree prune
-git branch --list 'ag/*' | tr -d ' +*' | xargs -r git branch -D
+git branch --list 'al/*' | tr -d ' +*' | xargs -r git branch -D
 ```
 
-Log các lượt chạy nằm ở `.agentgraph/runs/` — xoá thư mục con tương ứng nếu
-không cần xem lại. Skill và memory tích luỹ nằm ở `.agentgraph/skills/` và
-`.agentgraph/memory/`; **giữ lại** nếu muốn các lượt sau dùng tiếp.
+Log các lượt chạy nằm ở `.agentloom/runs/` — xoá thư mục con tương ứng nếu
+không cần xem lại. Skill và memory tích luỹ nằm ở `.agentloom/skills/` và
+`.agentloom/memory/`; **giữ lại** nếu muốn các lượt sau dùng tiếp.
 
-Thêm `.agentgraph/` vào `.gitignore` của project để không lỡ commit chúng.
+Thêm `.agentloom/` vào `.gitignore` của project để không lỡ commit chúng.
 
 ---
 
@@ -667,7 +686,7 @@ Thêm `.agentgraph/` vào `.gitignore` của project để không lỡ commit ch
 
 | Triệu chứng | Nguyên nhân | Cách sửa |
 | --- | --- | --- |
-| `command not found: agentgraph` | chưa cài vào `PATH` | `cargo install --path crates/cli --locked` trong repo agentgraph |
+| `command not found: agentloom` | chưa cài vào `PATH` | `cargo install --path crates/cli --locked` trong repo agentloom |
 | node hỏng: `repo chưa có commit nào` | repo vừa `git init` | `git add -A && git commit -m init` |
 | `doctor` báo `KHÔNG phải git repo` | đứng sai thư mục hoặc chưa `git init` | `cd` vào project; mọi node sẽ dùng chung thư mục nếu không phải repo |
 | node **xong** nhưng không có gì thay đổi | agent bị chặn quyền và không có `verify` | thêm `--permission-mode bypassPermissions`, **luôn** có `verify` |
@@ -675,32 +694,32 @@ Thêm `.agentgraph/` vào `.gitignore` của project để không lỡ commit ch
 | agent không thấy thay đổi mới nhất của bạn | thay đổi chưa commit | commit trước khi chạy — worktree tách từ commit hiện tại |
 | `merge đụng độ, agent phải tự xử lý` | hai node trước sửa cùng chỗ | bình thường; agent node sau được báo. Muốn tránh thì chia phạm vi file rõ hơn trong `task` |
 | web: cổng đã bị dùng | cổng `7878` bận | `--port 7879` |
-| web: "không nối được tới agentgraph" | mở thẳng file `index.html` | chạy `agentgraph web`, mở link nó in ra |
+| web: "không nối được tới agentloom" | mở thẳng file `index.html` | chạy `agentloom web`, mở link nó in ra |
 | web: "thiếu hoặc sai token" | mở `http://127.0.0.1:7878` không có token, hoặc server đã khởi động lại | mở lại đúng link mới nhất trong terminal |
-| web: nút Chạy báo "web này chỉ để xem" | trang được mở bằng `run --web` / `replay --web` | dùng `agentgraph web` |
+| web: nút Chạy báo "web này chỉ để xem" | trang được mở bằng `run --web` / `replay --web` | dùng `agentloom web` |
 | `ask`: worktree đã bị xoá | đã dọn dẹp trước khi hỏi | không khôi phục được session trong worktree; chạy lại node |
 | chi phí codex trông thấp/cao lạ | codex chỉ báo token, USD là ước lượng | đối chiếu với trang billing của OpenAI |
 
 Muốn xem đầy đủ chuyện gì đã xảy ra: mọi thứ nằm trong
-`.agentgraph/runs/<run-id>/events.jsonl`, mỗi dòng một event JSON.
+`.agentloom/runs/<run-id>/events.jsonl`, mỗi dòng một event JSON.
 
 ---
 
 ## 13. Tham chiếu lệnh
 
 ```
-agentgraph doctor
-agentgraph run [PLAN] [--goal G] [--agent claude|codex] [--root DIR]
+agentloom doctor
+agentloom run [PLAN] [--goal G] [--agent claude|codex] [--root DIR]
                [--parallel N=3] [--budget USD=20] [--timeout-min M=30]
                [--permission-mode MODE=acceptEdits] [--plain | --web [--port 7878]]
-agentgraph web [--port 7878] [--root DIR]
-agentgraph runs [--root DIR]
-agentgraph replay EVENTS [--plain | --web [--port 7878]]
-agentgraph ask EVENTS NODE QUESTION [--plain]
+agentloom web [--port 7878] [--root DIR]
+agentloom runs [--root DIR]
+agentloom replay EVENTS [--plain | --web [--port 7878]]
+agentloom ask EVENTS NODE QUESTION [--plain]
 ```
 
-Giao thức agent dùng để sửa graph — agentgraph tự dạy agent qua system prompt,
-bạn không cần viết. Agent nối từng dòng JSON vào `.agentgraph/mutations.jsonl`
+Giao thức agent dùng để sửa graph — agentloom tự dạy agent qua system prompt,
+bạn không cần viết. Agent nối từng dòng JSON vào `.agentloom/mutations.jsonl`
 trong worktree của nó:
 
 ```json
@@ -728,7 +747,7 @@ crates/core/            lõi, không biết gì về giao diện
   run.rs                  scheduler: song song, ngân sách, verifier, huỷ
   config.rs               plan TOML + trần chi phí
 
-crates/cli/             binary `agentgraph`
+crates/cli/             binary `agentloom`
   tui.rs                  ratatui
   web.rs                  axum + SSE
   assets/index.html       trang web, không thư viện ngoài
@@ -764,7 +783,7 @@ stream `--json` nhưng dạng map trong file session; `codex exec resume` từ c
 **Huỷ đi theo cây cha–con, không theo process group.** Sandbox của codex chạy
 lệnh bằng `bwrap --new-session`, tức tách sang session riêng — `kill -<pgid>`
 không với tới, và lần huỷ đầu tiên với codex thật để lại `sleep` sống mồ côi.
-Giờ agentgraph đóng băng cả cây (`SIGSTOP`), gom lại toàn bộ hậu duệ, rồi mới
+Giờ agentloom đóng băng cả cây (`SIGSTOP`), gom lại toàn bộ hậu duệ, rồi mới
 giết. Thứ tự quan trọng: giết agent trước thì con của nó bị chuyển về init và
 mất dấu.
 
@@ -790,5 +809,5 @@ kiểm tra header `Host` chặn trường hợp sau.
 - **Không tự dọn** worktree, branch hay log — xem [mục 11](#11-dọn-dẹp).
 - **`--budget` không cắt node đang chạy**, chỉ ngừng nạp node mới.
 - **Web chỉ giữ các lượt chạy khởi động trong phiên server hiện tại.** Tắt
-  server là mất danh sách; lượt cũ vẫn xem được bằng `agentgraph runs` /
+  server là mất danh sách; lượt cũ vẫn xem được bằng `agentloom runs` /
   `replay --web`.

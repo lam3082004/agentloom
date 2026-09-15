@@ -1,15 +1,15 @@
 [package]
-name = "agentgraph-cli"
+name = "agentloom-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "agentgraph"
+name = "agentloom"
 path = "src/main.rs"
 
 [dependencies]
-agentgraph-core = { path = "../core" }
+agentloom-core = { path = "../core" }
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true

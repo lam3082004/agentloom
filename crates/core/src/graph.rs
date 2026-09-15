@@ -95,6 +95,17 @@ pub enum GraphError {
     NoSuchNode(NodeId),
 }
 
+/// Những gì một lần `refresh_ready` vừa thay đổi. Trạng thái đổi bên trong
+/// graph mà không ai phát event thì mọi mặt hiển thị (đều fold từ event log)
+/// sẽ không bao giờ biết — nên người gọi cần danh sách này để phát event.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Refresh {
+    /// Node vừa đủ dep, chuyển sang sẵn sàng.
+    pub opened: Vec<NodeId>,
+    /// (node vừa bị bỏ qua, dep đã hỏng hoặc đã bị bỏ qua khiến nó bị bỏ qua).
+    pub skipped: Vec<(NodeId, NodeId)>,
+}
+
 #[derive(Debug)]
 pub struct Graph {
     nodes: HashMap<NodeId, Node>,
@@ -214,8 +225,8 @@ impl Graph {
     }
 
     /// Cập nhật Blocked -> Ready cho node đã đủ dep; trả về danh sách vừa mở khoá.
-    pub fn refresh_ready(&mut self) -> Vec<NodeId> {
-        let mut opened = Vec::new();
+    pub fn refresh_ready(&mut self) -> Refresh {
+        let mut out = Refresh::default();
         for id in self.order.clone() {
             let Some(n) = self.nodes.get(&id) else {
                 continue;
@@ -230,25 +241,29 @@ impl Graph {
                     .map(|x| x.state == NodeState::Done)
                     .unwrap_or(false)
             });
-            let any_bad = deps.iter().any(|d| {
-                self.nodes
-                    .get(d)
-                    .map(|x| matches!(x.state, NodeState::Failed | NodeState::Skipped))
-                    .unwrap_or(false)
-            });
-            if any_bad {
+            let dep_hong = deps
+                .iter()
+                .find(|d| {
+                    self.nodes
+                        .get(*d)
+                        .map(|x| matches!(x.state, NodeState::Failed | NodeState::Skipped))
+                        .unwrap_or(false)
+                })
+                .cloned();
+            if let Some(dep) = dep_hong {
                 // Dep hỏng thì nhánh phía sau không còn nghĩa — bỏ qua, đừng chạy mù.
                 if let Some(n) = self.nodes.get_mut(&id) {
                     n.state = NodeState::Skipped;
                 }
+                out.skipped.push((id, dep));
             } else if all_done {
                 if let Some(n) = self.nodes.get_mut(&id) {
                     n.state = NodeState::Ready;
                 }
-                opened.push(id);
+                out.opened.push(id);
             }
         }
-        opened
+        out
     }
 
     pub fn ready(&self) -> Vec<NodeId> {
@@ -327,7 +342,7 @@ mod tests {
         );
         g.set_state(&NodeId::new("a").unwrap(), NodeState::Done)
             .unwrap();
-        let opened = g.refresh_ready();
+        let opened = g.refresh_ready().opened;
         assert_eq!(opened, vec![NodeId::new("b").unwrap()]);
     }
 
@@ -361,11 +376,11 @@ mod tests {
         g.set_state(&NodeId::new("a").unwrap(), NodeState::Done)
             .unwrap();
         assert!(
-            g.refresh_ready().is_empty(),
+            g.refresh_ready().opened.is_empty(),
             "mới xong 1 nhánh, join chưa được mở"
         );
         g.set_state(&NodeId::new("b").unwrap(), NodeState::Done)
             .unwrap();
-        assert_eq!(g.refresh_ready(), vec![NodeId::new("j").unwrap()]);
+        assert_eq!(g.refresh_ready().opened, vec![NodeId::new("j").unwrap()]);
     }
 }

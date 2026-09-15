@@ -1,4 +1,4 @@
-# Kế hoạch: agentgraph — multi-agent, graph động trong harness động
+# Kế hoạch: agentloom — multi-agent, graph động trong harness động
 
 **Bắt đầu:** 2026-09-14 · **Trạng thái:** mốc 1–3 xong, ba năng lực lõi đã kiểm chứng bằng agent thật
 
@@ -33,10 +33,10 @@ graph tự mọc lúc chạy.
       bằng pty capture (điều hướng + con trỏ chọn).
 - [x] **Mốc 3 — ba năng lực lõi, agent THẬT.** claude tự spawn một node codex
       (graph mọc 1→2 lúc chạy), node con thấy được việc node cha, và
-      `write_skill` ghi vào `.agentgraph/skills/` rồi được nạp lại ở lần sau.
+      `write_skill` ghi vào `.agentloom/skills/` rồi được nạp lại ở lần sau.
       Tổng $0.39. Hai bug nặng lộ ra ở đây, xem mục dưới.
 
-- [x] **Mốc 3b — resume.** Lệnh `agentgraph ask <events> <node> "<câu hỏi>"`
+- [x] **Mốc 3b — resume.** Lệnh `agentloom ask <events> <node> "<câu hỏi>"`
       đọc log tìm agent/session/worktree, resume qua đúng `AgentAdapter`
       (`--resume` cho claude, `codex exec resume` cho codex — xác nhận bằng
       `--help` thật, không đoán). `EventKind::NodeFinished` giờ mang `session`
@@ -52,7 +52,7 @@ graph tự mọc lúc chạy.
       `tokio::sync::watch` tới mọi adapter đang chạy; adapter giết cả process
       group (`process_group(0)`, giống cách `run.rs` đã làm cho verifier).
       Test bằng tiến trình `sleep` thật, kiểm PID biến mất sau khi huỷ.
-- [x] **Mốc 8 — `agentgraph runs`.** Liệt kê `.agentgraph/runs/*/events.jsonl`,
+- [x] **Mốc 8 — `agentloom runs`.** Liệt kê `.agentloom/runs/*/events.jsonl`,
       mới nhất trước, dùng lại `core::view::View` để fold — không viết logic
       đếm thứ hai. Log hỏng/dở dang không làm lệnh chết.
 
@@ -114,7 +114,7 @@ graph tự mọc lúc chạy.
   thật). Chưa test được việc bấm Ctrl-C thật trên terminal `--plain`/`--web`
   từ một test tự động (gửi SIGINT rồi quan sát toàn bộ luồng CLI là việc khó
   làm tất định trong CI) — chỉ xác nhận bằng đọc code + test ở tầng Runner.
-- `agentgraph ask`: đã xác nhận cờ CLI thật (`claude --help`,
+- `agentloom ask`: đã xác nhận cờ CLI thật (`claude --help`,
   `codex exec resume --help`) và test lỗi/log ở tầng CLI bằng log viết tay.
   Resume thật với claude (`--model sonnet`), ghi một "số bí mật" ở lượt chạy
   gốc rồi hỏi lại ở worktree cũ — trả lời đúng số, xác nhận resume thật sự
@@ -174,6 +174,6 @@ graph tự mọc lúc chạy.
 
 ```bash
 cargo test                      # 32 test, không cần API key
-cargo run -p agentgraph-cli -- doctor
+cargo run -p agentloom-cli -- doctor
 cd /tmp && mkdir t && cd t && git init -q && ...   # xem README
 ```

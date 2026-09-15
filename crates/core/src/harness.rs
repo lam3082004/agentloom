@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Đường dẫn tương đối trong workspace của node.
-pub const MUTATION_FILE: &str = ".agentgraph/mutations.jsonl";
+pub const MUTATION_FILE: &str = ".agentloom/mutations.jsonl";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]

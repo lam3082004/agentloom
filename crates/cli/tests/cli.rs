@@ -6,7 +6,7 @@ use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const BIN: &str = env!("CARGO_BIN_EXE_agentgraph");
+const BIN: &str = env!("CARGO_BIN_EXE_agentloom");
 
 struct Tmp(std::path::PathBuf);
 impl Drop for Tmp {
@@ -376,7 +376,7 @@ fn runs_khong_co_thu_muc_thi_bao_ro_chu_khong_loi() {
 #[test]
 fn runs_liet_ke_moi_nhat_truoc_va_khong_chet_vi_log_do_dang() {
     let d = tmp();
-    let runs_dir = d.0.join(".agentgraph").join("runs");
+    let runs_dir = d.0.join(".agentloom").join("runs");
     // Run cũ: xong sạch, có run_finished.
     let cu = runs_dir.join("20240101-000000-aaaaaa");
     std::fs::create_dir_all(&cu).unwrap();
@@ -432,7 +432,7 @@ fn runs_liet_ke_moi_nhat_truoc_va_khong_chet_vi_log_do_dang() {
 fn runs_dem_ca_node_chua_chay() {
     let d = tmp();
     let run =
-        d.0.join(".agentgraph")
+        d.0.join(".agentloom")
             .join("runs")
             .join("20240103-000000-cccccc");
     std::fs::create_dir_all(&run).unwrap();
