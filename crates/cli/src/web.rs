@@ -217,6 +217,12 @@ impl App {
 
     pub fn add_run(&self, h: RunHandle) {
         if let Ok(mut r) = self.inner.runs.write() {
+            // `EventLog::create` tạo file rỗng trên đĩa TRƯỚC khi lượt live này
+            // được đăng ký ở đây (xem `api_start_run`). Một `load_history` chạy
+            // đúng khoảng hở đó có thể đã nạp file rỗng ấy thành một `RunHandle`
+            // `past` cùng id. Bản live phải thế chỗ, không được cộng dồn —
+            // nếu không danh sách sẽ có hai dòng trùng id.
+            r.retain(|x| x.id != h.id);
             r.push(Arc::new(h));
         }
     }
@@ -1015,6 +1021,42 @@ mod tests {
         );
         assert!(meta.contains("dong moi nhat"));
         assert_eq!(p.lines, vec!["· dong moi nhat".to_string()]);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Bug thật: `api_start_run` tạo file `events.jsonl` rỗng (`EventLog::create`)
+    /// RỒI MỚI gọi `add_run` đăng ký lượt live — có khoảng hở await ở giữa
+    /// (`Runner::new`). Một request `GET /api/runs` rơi đúng khoảng hở đó gọi
+    /// `load_history`, thấy file rỗng trên đĩa, nạp nó thành một `RunHandle`
+    /// `past` và đẩy vào `runs`. Khi `add_run` chạy tiếp sau đó để đăng ký bản
+    /// live CÙNG id, nó phải thế chỗ bản `past` chứ không được cộng dồn —
+    /// nếu không danh sách lượt chạy sẽ có hai dòng trùng id, một cái không
+    /// bao giờ cập nhật (past) và không có nút Dừng.
+    #[tokio::test]
+    async fn add_run_thay_luot_past_trung_id_khong_bi_nhan_doi() {
+        let (log, dir) = tmp_log();
+        let past = RunHandle::replay(
+            "trung-id".into(),
+            dir.clone(),
+            log.path().to_path_buf(),
+            View::default(),
+        );
+        let app = App::new(true, std::env::temp_dir());
+        app.add_run(past);
+        let live = RunHandle::live("trung-id".into(), dir.clone(), &log, None);
+        app.add_run(live);
+        let so_luong = app
+            .inner
+            .runs
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|h| h.id == "trung-id")
+            .count();
+        assert_eq!(
+            so_luong, 1,
+            "id trùng phải chỉ còn một bản (live thế chỗ past), không được liệt kê hai lần"
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 
