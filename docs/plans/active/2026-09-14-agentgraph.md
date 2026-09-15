@@ -78,6 +78,23 @@ graph tự mọc lúc chạy.
 - Con trỏ đọc mutation khoá theo node, nên ở chế độ `shared` node chạy sau
   áp lại mutation của node trước. Giờ khoá theo đường dẫn file.
 
+## Đợt 2026-09-15 (chiều)
+
+- `ask` với codex hỏng hoàn toàn: `codex exec resume` từ chối `--sandbox` và
+  `-C` (thoát mã 2). Tách `codex_args` thành hàm thuần có test; sandbox đi qua
+  `-c sandbox_mode=...`, thư mục qua cwd tiến trình. Chạy thật: trả lời đúng.
+- Code không compile được trên Windows (`process_group` chỉ có trên Unix).
+  Gom quản lý tiến trình vào `agent/mod.rs` với bản Unix/Windows; build sạch
+  cho `x86_64-pc-windows-gnu`, CHƯA chạy thật trên Windows.
+- `runs` đếm thêm node chưa chạy / đang chạy.
+- Repo chưa có commit: lỗi git thô → thông báo chỉ cách sửa; `doctor` thôi
+  báo ✓ sai.
+- Bỏ phím `f` của TUI (đổi một biến không ai đọc).
+- README viết lại thành hướng dẫn từng bước + 6 công thức; mọi plan mẫu đã
+  chạy được bằng fake agent.
+- Phát hiện nhưng chưa làm: worktree/branch/log không bao giờ tự dọn
+  (`Worktrees::remove` và `Limits::keep_branches` không ai dùng).
+
 ## Rủi ro còn mở
 
 - `bypassPermissions` cần thiết để agent làm việc không giám sát, nhưng đó là
