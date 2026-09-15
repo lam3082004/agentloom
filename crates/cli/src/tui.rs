@@ -246,6 +246,7 @@ mod tests {
                     agent: "fake".into(),
                     deps: vec![],
                     by: Origin::Plan,
+                    model: None,
                 },
             ));
         }

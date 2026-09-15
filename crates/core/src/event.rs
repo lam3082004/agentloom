@@ -35,6 +35,10 @@ pub enum EventKind {
         agent: String,
         deps: Vec<NodeId>,
         by: Origin,
+        /// Model agent dùng; `None` là mặc định của CLI agent. Log cũ không
+        /// có trường này nên phải có `default` để còn replay được.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     NodeState {
         state: String,

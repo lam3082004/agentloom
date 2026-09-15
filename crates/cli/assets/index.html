@@ -3,186 +3,586 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>agentgraph</title>
+<title>agentgraph studio</title>
 <style>
   :root{
-    --bg:#fafbfc; --panel:#fff; --ink:#0e141c; --ink2:#47535f; --ink3:#646f7a;
-    --rule:#d5dce4; --blue:#1746c4; --green:#0f7b3f; --amber:#9a5203;
-    --red:#b3261e; --mag:#7b2d8e;
+    --bg:#f6f7f9; --panel:#fff; --panel2:#f9fafb; --ink:#0e141c; --ink2:#47535f; --ink3:#6b7682;
+    --rule:#dde3ea; --rule2:#eaeef2; --blue:#1d4ed8; --blue-soft:#e8efff;
+    --green:#15803d; --green-soft:#e7f6ec; --amber:#b45309; --amber-soft:#fdf1e1;
+    --red:#b91c1c; --red-soft:#fdeaea; --gray:#94a3b8; --gray-soft:#f1f4f7; --mag:#7e22ce;
+    --mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0d1117; --panel:#141a22; --panel2:#11161d; --ink:#e6edf3; --ink2:#aab6c2; --ink3:#7d8a97;
+      --rule:#263140; --rule2:#1d2632; --blue:#79a6ff; --blue-soft:#17233d;
+      --green:#4ade80; --green-soft:#132a1d; --amber:#fbbf24; --amber-soft:#2e2412;
+      --red:#f87171; --red-soft:#2d1717; --gray:#64748b; --gray-soft:#18202a; --mag:#c084fc;
+    }
   }
   *{box-sizing:border-box}
+  html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--ink);
-       font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
-  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
-         padding:10px 16px;border-bottom:1px solid var(--rule);background:var(--panel)}
+       font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+       display:flex;flex-direction:column}
+  button,input,select,textarea{font:inherit;color:inherit}
+  .mono{font-family:var(--mono)}
+
+  /* ── thanh trên ─────────────────────────────────────────────── */
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 16px;
+         background:var(--panel);border-bottom:1px solid var(--rule)}
   .brand{font-weight:700;letter-spacing:-.01em}
-  .goal{color:var(--ink3);flex:1;min-width:180px}
-  .cost{font-variant-numeric:tabular-nums;font-weight:700;color:var(--green)}
-  .counts{color:var(--ink2);font-size:13px}
-  .dead{color:var(--red);font-weight:600}
-  main{display:grid;grid-template-columns:minmax(240px,34%) 1fr;gap:14px;
-       padding:14px 16px;align-items:start}
-  @media (max-width:760px){main{grid-template-columns:1fr}}
-  .card{background:var(--panel);border:1px solid var(--rule);border-radius:10px;
-        overflow:hidden}
-  .card h2{margin:0;padding:8px 12px;font-size:12px;letter-spacing:.08em;
-           text-transform:uppercase;color:var(--ink3);font-weight:600;
-           border-bottom:1px solid var(--rule)}
-  ul{list-style:none;margin:0;padding:6px}
-  li{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;
-     cursor:pointer;font-size:13px}
-  li:hover{background:#f2f5f8}
-  li[aria-selected=true]{background:#edf2fd;outline:1px solid var(--blue)}
-  .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--ink3)}
-  .s-running{background:var(--amber);animation:p 1s infinite}
-  .s-done{background:var(--green)} .s-failed{background:var(--red)}
-  .s-skipped{background:var(--rule)} .s-ready{background:var(--blue)}
-  @keyframes p{50%{opacity:.25}}
-  .nid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600}
-  .dep{margin-left:14px}
-  .meta{margin-left:auto;color:var(--ink3);font-size:12px;
-        font-variant-numeric:tabular-nums;white-space:nowrap}
-  .byagent{color:var(--mag);font-size:11px}
-  pre{margin:0;padding:12px;white-space:pre-wrap;word-break:break-word;
-      font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink2);
-      max-height:72vh;overflow:auto}
+  .brand small{font-weight:500;color:var(--ink3);margin-left:4px}
+  #runSel{max-width:420px;min-width:180px;padding:5px 8px;border:1px solid var(--rule);
+          border-radius:7px;background:var(--panel)}
+  .spacer{flex:1}
+  .stat{color:var(--ink2);font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .stat b{color:var(--ink)}
+  .cost{font-weight:700;color:var(--green);font-variant-numeric:tabular-nums}
+  .btn{border:1px solid var(--rule);background:var(--panel);border-radius:8px;padding:6px 12px;cursor:pointer}
+  .btn:hover{border-color:var(--ink3)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-primary{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
+  .btn-primary:hover{filter:brightness(1.08)}
+  .btn-danger{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,var(--rule))}
+
+  /* ── bố cục ─────────────────────────────────────────────────── */
+  main{flex:1;min-height:0;display:grid;grid-template-columns:340px minmax(0,1fr) 400px}
+  @media (max-width:1180px){main{grid-template-columns:320px minmax(0,1fr)} #detail{grid-column:1/-1;border-top:1px solid var(--rule)}}
+  @media (max-width:760px){main{grid-template-columns:1fr} aside,#graphWrap{border-right:0!important}}
+  aside{border-right:1px solid var(--rule);background:var(--panel);overflow:auto;padding:14px 16px 20px}
+  h2{margin:0 0 10px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+  label.f{display:block;margin:12px 0 4px;font-size:12.5px;font-weight:600;color:var(--ink2)}
+  .inp{width:100%;padding:7px 9px;border:1px solid var(--rule);border-radius:8px;background:var(--panel2)}
+  .inp:focus{outline:2px solid color-mix(in srgb,var(--blue) 35%,transparent);border-color:var(--blue)}
+  textarea.inp{min-height:150px;resize:vertical;font-family:var(--mono);font-size:13px;line-height:1.5}
+  .hint{font-size:12px;color:var(--ink3);margin-top:4px}
+  .dirstat{font-size:12px;margin-top:5px;padding:5px 8px;border-radius:6px;display:none}
+  .dirstat.ok{display:block;background:var(--green-soft);color:var(--green)}
+  .dirstat.warn{display:block;background:var(--amber-soft);color:var(--amber)}
+  .dirstat.error{display:block;background:var(--red-soft);color:var(--red)}
+  .seg{display:flex;gap:6px}
+  .seg label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:7px;border:1px solid var(--rule);
+             border-radius:8px;cursor:pointer;background:var(--panel2);font-weight:600}
+  .seg input{position:absolute;opacity:0;pointer-events:none}
+  .seg label:has(input:checked){border-color:var(--blue);background:var(--blue-soft);color:var(--blue)}
+  .seg label.off{opacity:.45;cursor:not-allowed}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  details{margin-top:12px;border:1px solid var(--rule2);border-radius:8px;padding:6px 10px}
+  summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ink2)}
+  #startBtn{width:100%;margin-top:14px;padding:9px}
+  .formerr{color:var(--red);font-size:12.5px;margin-top:8px;min-height:1em}
+  .readonly-note{padding:10px;border-radius:8px;background:var(--gray-soft);color:var(--ink2);font-size:13px}
+
+  /* ── graph ──────────────────────────────────────────────────── */
+  #graphWrap{position:relative;min-height:0;overflow:auto;border-right:1px solid var(--rule);
+             background-image:radial-gradient(var(--rule2) 1px,transparent 1px);background-size:18px 18px}
+  #graphEmpty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+              color:var(--ink3);text-align:center;padding:24px;pointer-events:none}
+  svg{display:block}
+  .edge{fill:none;stroke:var(--gray);stroke-width:1.6}
+  .edge.done{stroke:var(--green)}
+  .edge.live{stroke:var(--amber);stroke-dasharray:6 5;animation:flow 0.9s linear infinite}
+  @keyframes flow{to{stroke-dashoffset:-22}}
+  .nd{cursor:pointer}
+  .nd rect.box{fill:var(--panel);stroke:var(--rule);stroke-width:1.2}
+  .nd.sel rect.box{stroke:var(--blue);stroke-width:2.4}
+  .nd rect.bar{fill:var(--gray)}
+  .nd.s-running rect.bar{fill:var(--amber)} .nd.s-done rect.bar{fill:var(--green)}
+  .nd.s-failed rect.bar{fill:var(--red)} .nd.s-ready rect.bar{fill:var(--blue)}
+  .nd.s-running rect.box{fill:var(--amber-soft)}
+  .nd.s-failed rect.box{fill:var(--red-soft)}
+  .nd.s-skipped{opacity:.55}
+  .nd .t1{font-weight:700;font-size:13px;fill:var(--ink)}
+  .nd .t2{font-size:11.5px;fill:var(--ink3)}
+  .nd .t3{font-size:11.5px;fill:var(--ink2);font-family:var(--mono)}
+  .nd .badge{font-size:11px;fill:var(--mag);font-weight:700}
+  .nd .cost{font-size:11px;fill:var(--ink3);font-weight:400}
+  .pulse{fill:none;stroke:var(--amber);stroke-width:2;animation:pulse 1.4s ease-out infinite}
+  @keyframes pulse{0%{opacity:.8}100%{opacity:0;transform:scale(1.06)}}
+  .pulse{transform-box:fill-box;transform-origin:center}
+
+  /* ── chi tiết node ──────────────────────────────────────────── */
+  #detail{background:var(--panel);min-height:0;display:flex;flex-direction:column}
+  #detailHead{padding:12px 16px;border-bottom:1px solid var(--rule)}
+  #detailHead .id{font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .pill{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:999px;
+        background:var(--gray-soft);color:var(--ink2)}
+  .pill.running{background:var(--amber-soft);color:var(--amber)}
+  .pill.done{background:var(--green-soft);color:var(--green)}
+  .pill.failed{background:var(--red-soft);color:var(--red)}
+  dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:10px 0 0;font-size:12.5px}
+  dt{color:var(--ink3)} dd{margin:0;color:var(--ink);word-break:break-all}
+  .copy{margin-left:6px;font-size:11px;padding:1px 6px;border-radius:5px;border:1px solid var(--rule);background:var(--panel2);cursor:pointer}
+  #summary{margin-top:8px;font-size:12.5px;color:var(--ink2);white-space:pre-wrap;max-height:90px;overflow:auto}
+  #log{flex:1;min-height:180px;margin:0;padding:12px 16px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+       font:12px/1.6 var(--mono);color:var(--ink2);background:var(--panel2)}
   .l-tool{color:var(--blue)} .l-mut{color:var(--mag)} .l-note{color:var(--ink3)}
   .l-bad{color:var(--red)} .l-ok{color:var(--green)}
-  .empty{padding:16px;color:var(--ink3)}
+
+  #banner{display:none;margin:0;padding:10px 16px;background:var(--red-soft);color:var(--red);border-bottom:1px solid var(--rule)}
+  #banner.show{display:block}
+  #banner code{background:var(--panel);padding:1px 5px;border-radius:4px}
 </style>
 </head>
 <body>
 <header>
-  <span class="brand">agentgraph</span>
-  <span class="goal" id="goal">đang nạp…</span>
+  <span class="brand">agentgraph <small>studio</small></span>
+  <select id="runSel" aria-label="Chọn lượt chạy"></select>
+  <span class="spacer"></span>
+  <span class="stat" id="counts"></span>
   <span class="cost" id="cost">$0.00</span>
-  <span class="counts" id="counts"></span>
+  <button class="btn btn-danger" id="stopBtn" hidden>Dừng</button>
 </header>
+<p id="banner"></p>
+
 <main>
-  <section class="card">
-    <h2 id="graphTitle">graph</h2>
-    <ul id="nodes"></ul>
+  <aside>
+    <div id="form">
+      <h2>Chạy mới</h2>
+
+      <label class="f" for="dir">Thư mục project</label>
+      <input class="inp mono" id="dir" list="dirHist" spellcheck="false" autocomplete="off">
+      <datalist id="dirHist"></datalist>
+      <div class="dirstat" id="dirStat"></div>
+
+      <label class="f">Agent chính</label>
+      <div class="seg" id="agentSeg"></div>
+
+      <label class="f" for="model">Model</label>
+      <select class="inp" id="model"></select>
+      <input class="inp mono" id="modelCustom" placeholder="tên model, ví dụ gpt-5.6-luna" hidden spellcheck="false">
+
+      <label class="f" for="prompt">Prompt</label>
+      <textarea class="inp" id="prompt" placeholder="Ví dụ:
+Test tests/test_auth.py đang đỏ. Tìm nguyên nhân và sửa.
+Nếu có nhiều module độc lập cần sửa, hãy giao mỗi module cho một agent con."></textarea>
+      <div class="hint">Agent chính có thể tự giao việc cho agent con — graph sẽ mọc thêm ngay trên màn hình.</div>
+
+      <details>
+        <summary>Nâng cao</summary>
+        <label class="f" for="perm">Quyền (claude)</label>
+        <select class="inp" id="perm"></select>
+        <div class="hint" id="permHint"></div>
+
+        <label class="f" for="verify">Lệnh kiểm chứng (verify)</label>
+        <input class="inp mono" id="verify" placeholder="ví dụ: pytest -q" spellcheck="false">
+        <div class="hint">Thoát 0 thì agent chính mới được tính là xong.</div>
+
+        <div class="row2">
+          <div><label class="f" for="budget">Ngân sách USD</label><input class="inp" id="budget" type="number" min="0.01" step="0.5" value="20"></div>
+          <div><label class="f" for="parallel">Song song</label><input class="inp" id="parallel" type="number" min="1" max="32" value="3"></div>
+        </div>
+        <label class="f" for="timeout">Timeout mỗi agent (phút)</label>
+        <input class="inp" id="timeout" type="number" min="1" max="1440" value="30">
+      </details>
+
+      <button class="btn btn-primary" id="startBtn">Chạy</button>
+      <div class="formerr" id="formErr"></div>
+    </div>
+    <div class="readonly-note" id="readonly" hidden>
+      Web này chỉ để xem lượt chạy khởi động từ terminal. Muốn chạy từ trình
+      duyệt, dùng <code class="mono">agentgraph web</code>.
+    </div>
+  </aside>
+
+  <section id="graphWrap">
+    <div id="graphEmpty">Chưa có lượt chạy nào.<br>Nhập prompt bên trái rồi bấm <b>&nbsp;Chạy&nbsp;</b>.</div>
+    <svg id="graph" width="0" height="0"></svg>
   </section>
-  <section class="card">
-    <h2 id="logTitle">log</h2>
-    <pre id="log" class="empty">chọn một node</pre>
+
+  <section id="detail">
+    <div id="detailHead">
+      <div class="id"><span id="dId">Chọn một node trên graph</span><span class="pill" id="dState" hidden></span></div>
+      <dl id="dInfo" hidden>
+        <dt>Agent</dt><dd id="dAgent"></dd>
+        <dt>Model</dt><dd id="dModel"></dd>
+        <dt>Tạo bởi</dt><dd id="dBy"></dd>
+        <dt>Thời gian</dt><dd id="dTime"></dd>
+        <dt>Chi phí</dt><dd id="dCost"></dd>
+        <dt>Thư mục</dt><dd><span id="dWs" class="mono"></span><button class="copy" id="copyWs" hidden>chép</button></dd>
+      </dl>
+      <div id="summary"></div>
+    </div>
+    <pre id="log"></pre>
   </section>
 </main>
+
 <script>
-let view = {order:[], nodes:{}, goal:"", total_cost:0, finished:false, mutations_rejected:0};
-let sel = null;
-// Người dùng đã tự cuộn lên thì đừng giật xuống đáy sau mỗi event.
-let stick = true;
+"use strict";
+const $ = id => document.getElementById(id);
+const TOKEN = new URLSearchParams(location.search).get("token") || "";
 
-const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+let meta = null;           // /api/meta
+let runs = [];             // /api/runs
+let runId = null;          // lượt chạy đang xem
+let view = null;           // View của lượt chạy đang xem
+let sel = null;            // node đang chọn
+let es = null;             // EventSource
+let stickLog = true;
 
-function lineClass(l){
-  if (l.startsWith('→')) return 'l-tool';
-  if (l.startsWith('⚙')) return l.includes('TỪ CHỐI') ? 'l-bad' : 'l-mut';
-  if (l.startsWith('!')) return 'l-bad';
-  if (l.startsWith('✓')) return 'l-ok';
-  if (l.startsWith('✕')) return 'l-bad';
-  if (l.startsWith('i') || l.startsWith('⌂')) return 'l-note';
-  return '';
+function banner(html){ const b = $("banner"); b.innerHTML = html; b.classList.add("show"); }
+
+// Mở thẳng file index.html thì không có server phía sau — nói rõ cách mở đúng.
+if (location.protocol === "file:") {
+  banner("Trang này cần server của agentgraph. Chạy <code>agentgraph web</code> trong terminal rồi mở đúng link được in ra (có <code>?token=</code>).");
+  throw new Error("mở từ file://");
+}
+if (!TOKEN) {
+  banner("Thiếu token trong địa chỉ. Mở đúng link <code>http://127.0.0.1:…/?token=…</code> được in ra terminal khi chạy <code>agentgraph web</code>.");
 }
 
-function renderNodes(){
-  const ul = document.getElementById('nodes');
-  ul.innerHTML = '';
-  for (const id of view.order){
-    const n = view.nodes[id]; if (!n) continue;
-    const li = document.createElement('li');
-    li.setAttribute('aria-selected', id === sel);
-    li.onclick = () => { sel = id; stick = true; render(); };
-    const bits = [];
-    bits.push(`<span class="dot s-${esc(n.state)}"></span>`);
-    bits.push(`<span class="nid${n.deps.length ? ' dep' : ''}">${esc(n.id)}</span>`);
-    bits.push(`<span style="color:var(--ink3)">${esc(n.agent)}</span>`);
-    if (n.by_agent) bits.push('<span class="byagent" title="do agent sinh ra">⚙</span>');
-    const meta = [];
-    if (n.elapsed_s) meta.push(n.elapsed_s + 's');
-    if (n.cost > 0) meta.push('$' + n.cost.toFixed(2));
-    if (meta.length) bits.push(`<span class="meta">${esc(meta.join(' · '))}</span>`);
-    li.innerHTML = bits.join('');
-    ul.appendChild(li);
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    ...opts,
+    headers: { "x-agentgraph-token": TOKEN, "Content-Type": "application/json", ...(opts.headers || {}) },
+  });
+  let body = null;
+  try { body = await r.json(); } catch (_) {}
+  if (!r.ok) {
+    if (r.status === 401) banner("Token sai hoặc đã hết hạn (server đã khởi động lại). Mở lại link mới được in ra terminal.");
+    throw new Error((body && body.error) || ("lỗi " + r.status));
   }
-  document.getElementById('graphTitle').textContent = `graph · ${view.order.length} node`;
+  return body;
 }
 
-function renderLog(){
-  const pre = document.getElementById('log');
-  const n = sel && view.nodes[sel];
-  if (!n){ pre.className='empty'; pre.textContent='chọn một node'; 
-           document.getElementById('logTitle').textContent='log'; return; }
-  document.getElementById('logTitle').textContent =
-    `${n.id}${n.title && n.title !== n.id ? ' — ' + n.title : ''} · ${n.agent} · ${n.state}`;
-  pre.className='';
-  pre.innerHTML = n.lines.map(l =>
-    `<span class="${lineClass(l)}">${esc(l)}</span>`).join('\n');
-  if (stick) pre.scrollTop = pre.scrollHeight;
+// ── lịch sử thư mục (tiện ích riêng của trình duyệt này) ─────────────────
+function dirHistory(){ try { return JSON.parse(localStorage.getItem("ag.dirs") || "[]"); } catch (_) { return []; } }
+function rememberDir(d){
+  try {
+    const h = [d, ...dirHistory().filter(x => x !== d)].slice(0, 8);
+    localStorage.setItem("ag.dirs", JSON.stringify(h));
+  } catch (_) {}
+  renderDirHistory();
+}
+function renderDirHistory(){
+  const dl = $("dirHist"); dl.replaceChildren();
+  for (const d of dirHistory()) { const o = document.createElement("option"); o.value = d; dl.appendChild(o); }
 }
 
-function renderHead(){
-  document.getElementById('goal').textContent = view.goal || '';
-  document.getElementById('cost').textContent = '$' + (view.total_cost || 0).toFixed(2);
-  let r=0,d=0,f=0,w=0;
-  for (const id of view.order){
-    const s = (view.nodes[id]||{}).state;
-    if (s==='running') r++; else if (s==='done') d++;
-    else if (s==='failed') f++; else w++;
+// ── form ──────────────────────────────────────────────────────────────────
+const PERM_HINT = {
+  acceptEdits: "Thận trọng. Agent claude chạy không giám sát thường bị chặn lệnh shell ở chế độ này — có thể chạy xong mà không làm được gì.",
+  bypassPermissions: "Agent tự làm mọi thứ bằng quyền của bạn, trong worktree riêng. Dùng khi muốn agent chạy tự động thật sự.",
+  plan: "Agent chỉ lập kế hoạch, không sửa file.",
+};
+
+function setupForm(){
+  if (!meta.can_start) { $("form").hidden = true; $("readonly").hidden = false; return; }
+  const seg = $("agentSeg"); seg.replaceChildren();
+  let first = null;
+  for (const a of meta.agents) {
+    const lab = document.createElement("label");
+    const inp = document.createElement("input");
+    inp.type = "radio"; inp.name = "agent"; inp.value = a.name; inp.disabled = !a.available;
+    lab.append(inp, document.createTextNode(a.name + (a.available ? "" : " (chưa cài)")));
+    if (!a.available) lab.classList.add("off");
+    if (a.available && !first) { first = inp; }
+    seg.appendChild(lab);
+    inp.addEventListener("change", fillModels);
   }
-  const parts = [`${r} chạy`, `${d} xong`, `${f} hỏng`, `${w} chờ`];
-  if (view.mutations_rejected) parts.push(`${view.mutations_rejected} mutation bị từ chối`);
-  if (view.finished) parts.push('XONG');
-  const el = document.getElementById('counts');
-  el.textContent = parts.join(' · ');
-  el.className = 'counts' + (f ? ' dead' : '');
+  if (first) first.checked = true;
+  fillModels();
+
+  const perm = $("perm"); perm.replaceChildren();
+  for (const p of meta.permission_modes) { const o = document.createElement("option"); o.value = o.textContent = p; perm.appendChild(o); }
+  perm.value = "acceptEdits";
+  const hint = () => { $("permHint").textContent = PERM_HINT[perm.value] || ""; };
+  perm.addEventListener("change", hint); hint();
+
+  const dir = $("dir");
+  dir.value = dirHistory()[0] || meta.default_root;
+  renderDirHistory();
+  let t = null;
+  dir.addEventListener("input", () => { clearTimeout(t); t = setTimeout(checkDir, 350); });
+  checkDir();
+
+  $("model").addEventListener("change", () => { $("modelCustom").hidden = $("model").value !== "__custom"; });
+  $("startBtn").addEventListener("click", start);
 }
 
-function render(){ renderHead(); renderNodes(); renderLog(); }
+function agentValue(){ const c = document.querySelector('input[name="agent"]:checked'); return c ? c.value : ""; }
 
-document.getElementById('log').addEventListener('scroll', e => {
-  const el = e.target;
-  stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-});
+function fillModels(){
+  const m = $("model"); m.replaceChildren();
+  const add = (v, label) => { const o = document.createElement("option"); o.value = v; o.textContent = label; m.appendChild(o); };
+  const agent = agentValue();
+  add("", "mặc định của " + (agent || "agent"));
+  if (agent === "claude") for (const x of meta.claude_models) add(x, x);
+  add("__custom", "khác… (tự nhập)");
+  $("modelCustom").hidden = true;
+}
 
-// Ảnh chụp trước, stream sau: mở tab muộn hay reload đều không mất dữ liệu.
-// Server đã fold sẵn; ở đây chỉ ghép, không diễn giải event.
-fetch('/api/view').then(r => r.json()).then(v => {
-  view = v;
+async function checkDir(){
+  const s = $("dirStat");
+  try {
+    const r = await api("/api/check-dir", { method: "POST", body: JSON.stringify({ path: $("dir").value }) });
+    s.className = "dirstat " + r.level;
+    s.textContent = (r.level === "ok" ? "✓ " : r.level === "warn" ? "! " : "✕ ") + r.message;
+    return r;
+  } catch (e) { s.className = "dirstat error"; s.textContent = e.message; return null; }
+}
+
+async function start(){
+  const err = $("formErr"); err.textContent = "";
+  let model = $("model").value;
+  if (model === "__custom") model = $("modelCustom").value.trim();
+  const body = {
+    prompt: $("prompt").value,
+    agent: agentValue(),
+    model: model || null,
+    dir: $("dir").value,
+    verify: $("verify").value.trim() || null,
+    permission_mode: $("perm").value,
+    budget: parseFloat($("budget").value),
+    parallel: parseInt($("parallel").value, 10),
+    timeout_min: parseInt($("timeout").value, 10),
+  };
+  if (!body.prompt.trim()) { err.textContent = "Chưa nhập prompt."; return; }
+  const btn = $("startBtn"); btn.disabled = true; btn.textContent = "Đang khởi động…";
+  try {
+    const r = await api("/api/runs", { method: "POST", body: JSON.stringify(body) });
+    rememberDir($("dir").value.trim());
+    await refreshRuns();
+    selectRun(r.id);
+  } catch (e) { err.textContent = e.message; }
+  finally { btn.disabled = false; btn.textContent = "Chạy"; }
+}
+
+// ── lượt chạy ─────────────────────────────────────────────────────────────
+async function refreshRuns(){
+  try { runs = await api("/api/runs"); } catch (_) { return; }
+  const s = $("runSel");
+  const keep = runId;
+  s.replaceChildren();
+  if (!runs.length) { const o = document.createElement("option"); o.textContent = "chưa có lượt chạy"; o.disabled = true; s.appendChild(o); }
+  for (const r of runs) {
+    const o = document.createElement("option");
+    o.value = r.id;
+    const st = !r.finished ? "● đang chạy" : r.ok ? "✓" : "✕";
+    o.textContent = `${st} ${r.goal || r.id} — $${r.total_cost.toFixed(2)}`;
+    s.appendChild(o);
+  }
+  if (keep) s.value = keep;
+  if (!runId && runs.length) selectRun(runs[0].id);
+  updateStop();
+}
+
+async function selectRun(id){
+  if (es) { es.close(); es = null; }
+  runId = id; sel = null; stickLog = true;
+  $("runSel").value = id;
+  try { view = await api(`/api/runs/${encodeURIComponent(id)}/view`); }
+  catch (e) { banner("Không tải được lượt chạy: " + e.message); return; }
   if (!sel && view.order.length) sel = view.order[0];
   render();
-  const es = new EventSource('/api/events');
+  // Ảnh chụp trước, stream sau: mở tab muộn hay reload đều không mất gì.
+  es = new EventSource(`/api/runs/${encodeURIComponent(id)}/events?token=${encodeURIComponent(TOKEN)}`);
   es.onmessage = m => {
+    if (runId !== id) return;
     let p; try { p = JSON.parse(m.data); } catch (_) { return; }
     mergePatch(p);
     if (!sel && view.order.length) sel = view.order[0];
     render();
   };
-}).catch(() => {
-  document.getElementById('goal').textContent = 'không nối được tới agentgraph';
-});
+}
 
 /** Ghép một Patch: thay metadata node, nối thêm log. Không có logic nghiệp vụ. */
 function mergePatch(p){
   const m = p.view;
-  view.goal = m.goal;
-  view.order = m.order;
-  view.total_cost = m.total_cost;
-  view.finished = m.finished;
-  view.mutations_rejected = m.mutations_rejected;
-  for (const nm of m.nodes){
+  for (const k of ["goal","order","total_cost","finished","ok","mutations_rejected"]) if (k in m) view[k] = m[k];
+  for (const nm of m.nodes) {
     const old = view.nodes[nm.id];
-    view.nodes[nm.id] = Object.assign({}, nm, {lines: old ? old.lines : []});
+    view.nodes[nm.id] = Object.assign({}, old || {}, nm, { lines: old ? old.lines : [] });
   }
-  if (p.node && p.lines && p.lines.length){
+  if (p.node && p.lines && p.lines.length) {
     const n = view.nodes[p.node];
-    if (n){
-      n.lines.push(...p.lines);
-      if (n.lines.length > 2000) n.lines.splice(0, n.lines.length - 2000);
-    }
+    if (n) { n.lines.push(...p.lines); if (n.lines.length > 2000) n.lines.splice(0, n.lines.length - 2000); }
   }
 }
+
+function updateStop(){
+  const r = runs.find(x => x.id === runId);
+  $("stopBtn").hidden = !(r && r.can_cancel && view && !view.finished);
+}
+
+$("runSel").addEventListener("change", e => selectRun(e.target.value));
+$("stopBtn").addEventListener("click", async () => {
+  if (!runId) return;
+  $("stopBtn").disabled = true;
+  try { await api(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" }); }
+  catch (e) { banner("Không dừng được: " + e.message); }
+  finally { $("stopBtn").disabled = false; }
+});
+
+// ── vẽ ────────────────────────────────────────────────────────────────────
+const W = 236, H = 76, GX = 64, GY = 18, PAD = 24;
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function el(tag, attrs = {}, text){
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function clip(s, n){ s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+function secs(n){
+  if (n.state === "running" && n.started_ms) return Math.max(0, Math.round((Date.now() - n.started_ms) / 1000));
+  return n.elapsed_s || 0;
+}
+function fmtSecs(s){ return s >= 60 ? `${Math.floor(s/60)}m${String(s%60).padStart(2,"0")}s` : `${s}s`; }
+
+/** Xếp tầng theo đường dài nhất từ gốc: node chỉ đứng sau mọi dep của nó. */
+function layout(){
+  const layer = {};
+  const visiting = new Set();
+  const L = id => {
+    if (id in layer) return layer[id];
+    if (visiting.has(id)) return 0; // phòng vòng — graph phía server đã chặn chu trình
+    visiting.add(id);
+    let l = 0;
+    for (const d of (view.nodes[id] && view.nodes[id].deps) || []) if (view.nodes[d]) l = Math.max(l, L(d) + 1);
+    visiting.delete(id);
+    return (layer[id] = l);
+  };
+  const cols = [];
+  for (const id of view.order) { const l = L(id); (cols[l] = cols[l] || []).push(id); }
+  const maxRows = Math.max(1, ...cols.map(c => c.length));
+  const pos = {};
+  cols.forEach((c, l) => {
+    const off = (maxRows - c.length) * (H + GY) / 2;
+    c.forEach((id, i) => { pos[id] = { x: PAD + l * (W + GX), y: PAD + off + i * (H + GY) }; });
+  });
+  return { pos, width: PAD * 2 + cols.length * (W + GX) - GX, height: PAD * 2 + maxRows * (H + GY) - GY };
+}
+
+function renderGraph(){
+  const svg = $("graph");
+  svg.replaceChildren();
+  const has = view && view.order.length;
+  $("graphEmpty").style.display = has ? "none" : "flex";
+  if (!has) { svg.setAttribute("width", 0); svg.setAttribute("height", 0); return; }
+  const { pos, width, height } = layout();
+  svg.setAttribute("width", Math.max(width, 0));
+  svg.setAttribute("height", Math.max(height, 0));
+
+  const defs = el("defs");
+  for (const [name, color] of [["a-gray","var(--gray)"],["a-done","var(--green)"],["a-live","var(--amber)"]]) {
+    const mk = el("marker", { id: name, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" });
+    mk.appendChild(el("path", { d: "M0,0 L10,5 L0,10 z", fill: color }));
+    defs.appendChild(mk);
+  }
+  svg.appendChild(defs);
+
+  for (const id of view.order) {
+    const n = view.nodes[id]; if (!n) continue;
+    for (const d of n.deps || []) {
+      const a = pos[d], b = pos[id]; if (!a || !b) continue;
+      const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x - 3, y2 = b.y + H / 2, dx = Math.max(24, (x2 - x1) / 2);
+      const src = view.nodes[d];
+      const cls = n.state === "running" ? "live" : (src && src.state === "done") ? "done" : "";
+      svg.appendChild(el("path", {
+        class: "edge " + cls,
+        d: `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`,
+        "marker-end": `url(#${cls === "live" ? "a-live" : cls === "done" ? "a-done" : "a-gray"})`,
+      }));
+    }
+  }
+
+  for (const id of view.order) {
+    const n = view.nodes[id]; if (!n) continue;
+    const p = pos[id];
+    const g = el("g", { class: `nd s-${n.state}${id === sel ? " sel" : ""}`, transform: `translate(${p.x},${p.y})` });
+    g.addEventListener("click", () => { sel = id; stickLog = true; render(); });
+    if (n.state === "running") g.appendChild(el("rect", { class: "pulse", x: -3, y: -3, width: W + 6, height: H + 6, rx: 12 }));
+    g.appendChild(el("rect", { class: "box", width: W, height: H, rx: 10 }));
+    g.appendChild(el("rect", { class: "bar", width: 5, height: H - 16, x: 0, y: 8, rx: 2 }));
+    g.appendChild(el("text", { class: "t1", x: 14, y: 22 }, clip(n.id, 24)));
+    let right = W - 10;
+    if (n.cost > 0) { g.appendChild(el("text", { class: "cost", x: right, y: 22, "text-anchor": "end" }, "$" + n.cost.toFixed(2))); right -= 44; }
+    if (n.by_agent) g.appendChild(el("text", { class: "badge", x: right, y: 22, "text-anchor": "end" }, "⚙"));
+    const t = secs(n);
+    const sub = `${n.agent} · ${n.model || "mặc định"}${t ? " · " + fmtSecs(t) : ""}`;
+    g.appendChild(el("text", { class: "t2", x: 14, y: 40 }, clip(sub, 36)));
+    const act = n.state === "running" ? (n.last || "đang khởi động…")
+              : n.state === "blocked" ? "đang chờ node trước"
+              : n.state === "skipped" ? "bỏ qua (node trước hỏng)"
+              : (n.summary || n.last || n.state);
+    g.appendChild(el("text", { class: "t3", x: 14, y: 60 }, clip(act.replace(/\s+/g, " "), 34)));
+    const tip = el("title", {}, `${n.id} — ${n.title}\n${act}`);
+    g.appendChild(tip);
+    svg.appendChild(g);
+  }
+}
+
+function lineClass(l){
+  if (l.startsWith("→")) return "l-tool";
+  if (l.startsWith("⚙")) return l.includes("TỪ CHỐI") ? "l-bad" : "l-mut";
+  if (l.startsWith("!") || l.startsWith("✕")) return "l-bad";
+  if (l.startsWith("✓")) return "l-ok";
+  if (l.startsWith("i ") || l.startsWith("⌂")) return "l-note";
+  return "";
+}
+
+function renderDetail(){
+  const n = view && sel && view.nodes[sel];
+  $("dInfo").hidden = !n; $("dState").hidden = !n; $("copyWs").hidden = !(n && n.workspace);
+  if (!n) { $("dId").textContent = view && view.order.length ? "Chọn một node trên graph" : "—"; $("summary").textContent = ""; $("log").replaceChildren(); return; }
+  $("dId").textContent = n.title && n.title !== n.id ? `${n.id} — ${n.title}` : n.id;
+  const st = $("dState"); st.textContent = n.state; st.className = "pill " + n.state;
+  $("dAgent").textContent = n.agent;
+  $("dModel").textContent = n.model || "mặc định";
+  $("dBy").textContent = n.by_agent ? "agent (tự spawn lúc chạy)" : "prompt của bạn";
+  const t = secs(n); $("dTime").textContent = t ? fmtSecs(t) + (n.state === "running" ? " (đang chạy)" : "") : "—";
+  $("dCost").textContent = n.cost > 0 ? "$" + n.cost.toFixed(4) : "—";
+  $("dWs").textContent = n.workspace || "—";
+  $("summary").textContent = n.summary || "";
+  const log = $("log");
+  const frag = document.createDocumentFragment();
+  for (const l of n.lines || []) { const s = document.createElement("span"); s.className = lineClass(l); s.textContent = l + "\n"; frag.appendChild(s); }
+  log.replaceChildren(frag);
+  if (stickLog) log.scrollTop = log.scrollHeight;
+}
+
+function renderHead(){
+  let r = 0, d = 0, f = 0, w = 0;
+  if (view) for (const id of view.order) {
+    const s = (view.nodes[id] || {}).state;
+    if (s === "running") r++; else if (s === "done") d++; else if (s === "failed") f++; else w++;
+  }
+  const c = $("counts"); c.replaceChildren();
+  if (view) {
+    const parts = [[r, "đang chạy"], [d, "xong"], [f, "hỏng"], [w, "chờ"]];
+    parts.forEach(([num, txt], i) => {
+      if (i) c.append(" · ");
+      const b = document.createElement("b"); b.textContent = num; c.append(b, " " + txt);
+    });
+    if (view.finished) c.append(view.ok ? " · ✓ XONG" : " · ✕ CÓ LỖI");
+  }
+  $("cost").textContent = "$" + ((view && view.total_cost) || 0).toFixed(2);
+  document.title = view && view.goal ? `${r ? "● " : ""}${view.goal} — agentgraph` : "agentgraph studio";
+  updateStop();
+}
+
+function render(){ renderHead(); renderGraph(); renderDetail(); }
+
+$("log").addEventListener("scroll", e => {
+  const el2 = e.target; stickLog = el2.scrollHeight - el2.scrollTop - el2.clientHeight < 40;
+});
+$("copyWs").addEventListener("click", async () => {
+  const n = view && sel && view.nodes[sel]; if (!n || !n.workspace) return;
+  try { await navigator.clipboard.writeText(n.workspace); $("copyWs").textContent = "đã chép"; setTimeout(() => $("copyWs").textContent = "chép", 1200); } catch (_) {}
+});
+
+// Đồng hồ của node đang chạy tự đếm giữa hai patch.
+setInterval(() => { if (view && !view.finished && view.order.some(id => (view.nodes[id] || {}).state === "running")) { renderGraph(); renderDetail(); } }, 1000);
+setInterval(refreshRuns, 2500);
+
+(async () => {
+  try { meta = await api("/api/meta"); } catch (e) { if (TOKEN) banner("Không nối được tới agentgraph: " + e.message); return; }
+  setupForm();
+  await refreshRuns();
+})();
 </script>
 </body>
 </html>

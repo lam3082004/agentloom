@@ -110,8 +110,10 @@ impl AgentAdapter for ClaudeAdapter {
         tokio::select! {
             r = parse => r?,
             _ = tokio::time::sleep(req.timeout) => {
-                let _ = child.start_kill();
+                // Giết cả cây TRƯỚC khi giết agent: agent chết là con của nó bị chuyển
+                // về init, mất dấu cha–con và không còn lần ra để giết.
                 if let Some(pid) = pid { super::kill_process_group(pid).await; }
+                let _ = child.start_kill();
                 log.emit(
                     Some(req.node.clone()),
                     EventKind::Note {
@@ -125,8 +127,10 @@ impl AgentAdapter for ClaudeAdapter {
             // Người dùng huỷ (q trong TUI, Ctrl-C): giết cả process group để
             // không bỏ lại tiến trình claude — hay con của nó — chạy mồ côi.
             _ = super::wait_for_cancel(&mut cancel_rx) => {
-                let _ = child.start_kill();
+                // Giết cả cây TRƯỚC khi giết agent: agent chết là con của nó bị chuyển
+                // về init, mất dấu cha–con và không còn lần ra để giết.
                 if let Some(pid) = pid { super::kill_process_group(pid).await; }
+                let _ = child.start_kill();
                 log.emit(
                     Some(req.node.clone()),
                     EventKind::Note {

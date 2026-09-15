@@ -45,11 +45,20 @@ impl AgentAdapter for FakeAdapter {
             if let Some(d) = p.parent() {
                 std::fs::create_dir_all(d).ok();
             }
-            // Chỉ dòng đầu: phần còn lại là protocol block do harness nối thêm.
-            // Kết dòng bằng '\n' như agent thật: orchestrator coi dòng cuối
+            // Lấy mọi dòng JSON liên tiếp sau `EMIT:` — một agent thật có thể
+            // spawn nhiều node con cùng lúc. Dừng ở dòng đầu không phải JSON
+            // để các lệnh khác trong task (`SLEEP:`...) không lẫn vào.
+            // Kết mỗi dòng bằng '\n' như agent thật: orchestrator coi dòng cuối
             // chưa xuống dòng là dòng đang viết dở.
-            let first = rest.lines().next().unwrap_or("").trim().to_string();
-            std::fs::write(&p, format!("{first}\n"))?;
+            let lines: Vec<&str> = rest
+                .lines()
+                .map(str::trim)
+                .take_while(|l| l.starts_with('{'))
+                .collect();
+            std::fs::write(
+                &p,
+                lines.iter().map(|l| format!("{l}\n")).collect::<String>(),
+            )?;
         }
         // Task chứa "FAIL" thì hỏng — để test nhánh lỗi mà không cần cấu hình.
         // WRITE:<file>:<noi dung> — để test được chuỗi node có thấy việc của
@@ -90,13 +99,17 @@ impl AgentAdapter for FakeAdapter {
             tokio::select! {
                 _ = child.wait() => {}
                 _ = tokio::time::sleep(req.timeout) => {
-                    let _ = child.start_kill();
+                    // Giết cả cây TRƯỚC khi giết agent: agent chết là con của nó bị chuyển
+                    // về init, mất dấu cha–con và không còn lần ra để giết.
                     if let Some(pid) = pid { super::kill_process_group(pid).await; }
+                    let _ = child.start_kill();
                     return Ok(AgentOutcome{ ok: false, summary: "timeout".into(), ..Default::default() });
                 }
                 _ = super::wait_for_cancel(&mut cancel_rx) => {
-                    let _ = child.start_kill();
+                    // Giết cả cây TRƯỚC khi giết agent: agent chết là con của nó bị chuyển
+                    // về init, mất dấu cha–con và không còn lần ra để giết.
                     if let Some(pid) = pid { super::kill_process_group(pid).await; }
+                    let _ = child.start_kill();
                     return Ok(AgentOutcome{
                         session: Some(format!("fake-{}", req.node)),
                         ok: false,

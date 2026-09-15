@@ -65,6 +65,35 @@ fn http_get(port: u16, path: &str) -> Option<String> {
     Some(buf)
 }
 
+/// Web in `web đang chạy: http://…/?token=…`. Đọc token từ đó; luồng nền tiếp
+/// tục hút stdout để pipe không đầy làm tiến trình con bị treo.
+fn doc_token(child: &mut Child) -> String {
+    use std::io::BufRead;
+    let out = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+            if let Some(t) = line.split("?token=").nth(1) {
+                let _ = tx.send(t.trim().to_string());
+            }
+        }
+    });
+    rx.recv_timeout(Duration::from_secs(30))
+        .expect("không thấy link có token trong stdout")
+}
+
+/// View của lượt chạy duy nhất mà web đang giữ.
+fn web_view(port: u16, token: &str) -> Option<String> {
+    let list = http_get(port, &format!("/api/runs?token={token}"))?;
+    let id = list
+        .split("\"id\":\"")
+        .nth(1)?
+        .split('"')
+        .next()?
+        .to_string();
+    http_get(port, &format!("/api/runs/{id}/view?token={token}"))
+}
+
 struct Killer(Child);
 impl Drop for Killer {
     fn drop(&mut self) {
@@ -178,7 +207,7 @@ fn web_live_thay_du_node_va_van_phuc_vu_sau_khi_graph_xong() {
     let d = tmp();
     let p = viet_plan(&d.0, "p.toml", PLAN_HAI_NODE);
     let port = cong_trong();
-    let child = Command::new(BIN)
+    let mut child = Command::new(BIN)
         .args([
             "run",
             p.to_str().unwrap(),
@@ -191,14 +220,23 @@ fn web_live_thay_du_node_va_van_phuc_vu_sau_khi_graph_xong() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let token = doc_token(&mut child);
     let _k = Killer(child);
+
+    // Không token thì API phải từ chối — trang lạ trong trình duyệt gọi được
+    // 127.0.0.1 nhưng không đọc được token in ra terminal.
+    let khong_token = http_get(port, "/api/runs").unwrap_or_default();
+    assert!(
+        khong_token.starts_with("HTTP/1.1 401"),
+        "phải đòi token: {khong_token}"
+    );
 
     // Chờ graph chạy xong rồi mới hỏi: web phải sống lâu hơn graph.
     let het = Instant::now() + Duration::from_secs(30);
     let mut body = String::new();
     while Instant::now() < het {
         std::thread::sleep(Duration::from_millis(300));
-        let Some(r) = http_get(port, "/api/view") else {
+        let Some(r) = web_view(port, &token) else {
             continue;
         };
         if r.contains("\"finished\":true") {
@@ -448,13 +486,14 @@ fn sigint_web_khong_ngu_co_dinh_khi_khong_con_gi_de_giet() {
         .spawn()
         .unwrap();
     let pid = child.id();
+    let token = doc_token(&mut child);
 
     // Chờ graph xong hẳn (web vẫn mở phục vụ) trước khi gửi SIGINT — đúng
     // kịch bản "mọi thứ đã xong, không còn gì phải giết".
     let het = Instant::now() + Duration::from_secs(30);
     let mut thay_xong = false;
     while Instant::now() < het {
-        if let Some(body) = http_get(port, "/api/view") {
+        if let Some(body) = web_view(port, &token) {
             if body.contains("\"finished\":true") {
                 thay_xong = true;
                 break;

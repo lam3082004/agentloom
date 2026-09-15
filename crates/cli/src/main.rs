@@ -90,6 +90,15 @@ enum Cmd {
         #[arg(long, default_value = ".")]
         root: PathBuf,
     },
+    /// Mở giao diện web: gõ prompt, chọn agent, model, thư mục rồi bấm chạy —
+    /// xem graph các agent hoạt động trực tiếp.
+    Web {
+        #[arg(long, default_value_t = 7878)]
+        port: u16,
+        /// Thư mục điền sẵn trong ô "thư mục project".
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -109,6 +118,10 @@ async fn main() -> anyhow::Result<()> {
             plain,
         } => ask(events, node, question, plain).await,
         Cmd::Runs { root } => runs(root).await,
+        Cmd::Web { port, root } => {
+            let root = root.canonicalize().unwrap_or(root);
+            web::serve(web::App::new(true, root), port).await
+        }
         Cmd::Run {
             plan,
             goal,
@@ -184,11 +197,22 @@ async fn run(
     let log = EventLog::create(&events)?;
     let mut rx = log.subscribe();
 
+    let run_id_str = run_id.as_str().to_string();
     let runner = Runner::new(&root, limits, log.clone(), run_id).await?;
     let canceller = runner.canceller();
     // Mặt web phải đăng ký *trước* khi runner chạy: nó dựng trạng thái bằng
     // cách fold event, nên bỏ lỡ run_started/node_added là mất sạch graph.
-    let web_state = web.then(|| web::WebState::live(log.clone()));
+    let web_state = web.then(|| {
+        // Web khởi động từ terminal chỉ để XEM lượt chạy này, không mở lượt mới.
+        let app = web::App::new(false, root.clone());
+        app.add_run(web::RunHandle::live(
+            run_id_str.clone(),
+            root.clone(),
+            &log,
+            Some(canceller.clone()),
+        ));
+        app
+    });
     let mut handle = tokio::spawn(async move { runner.execute(plan).await });
 
     // Ctrl-C ở `--plain`/`--web` không còn tự giết được tiến trình agent con:
@@ -335,7 +359,20 @@ async fn replay(events: PathBuf, plain: bool, web: bool, port: u16) -> anyhow::R
         ui.view.apply(e);
     }
     if web {
-        return web::serve(web::WebState::replay(ui.view), port).await;
+        let run_dir = events.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let id = run_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "xem-lai".into());
+        // .agentgraph/runs/<id>/events.jsonl → gốc project nằm trên ba cấp.
+        let root = run_dir
+            .ancestors()
+            .nth(3)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| run_dir.clone());
+        let app = web::App::new(false, root.clone());
+        app.add_run(web::RunHandle::replay(id, root, events.clone(), ui.view));
+        return web::serve(app, port).await;
     }
     if plain {
         // Như chế độ dòng của `run`: đầu kia đóng pipe thì dừng, không panic.

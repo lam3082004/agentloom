@@ -13,6 +13,7 @@ dependencies = [
  "clap",
  "crossterm",
  "ratatui",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-stream",

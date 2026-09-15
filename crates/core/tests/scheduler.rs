@@ -1061,3 +1061,33 @@ task = "x"
     );
     assert!(ly_do.contains("git commit"), "phải chỉ cách sửa: {ly_do}");
 }
+
+/// Agent chính giao nhiều việc cùng lúc: các node con cùng phụ thuộc node cha
+/// nên phải chạy SONG SONG sau khi cha xong, không tuần tự.
+#[tokio::test]
+async fn agent_spawn_nhieu_node_con_cung_luc() {
+    let d = tmp();
+    let (s, ev) = run(
+        &d.0,
+        plan(
+            r#"
+goal = "g"
+[[node]]
+id = "chinh"
+title = "chinh"
+agent = "fake"
+task = """EMIT:{"op":"spawn","id":"con-a","agent":"fake","task":"a"}
+{"op":"spawn","id":"con-b","agent":"fake","task":"b"}
+{"op":"spawn","id":"con-c","agent":"fake","task":"c"}"""
+isolate = "shared"
+"#,
+        ),
+    )
+    .await;
+    assert_eq!(s.done, 4, "cha + 3 con");
+    let con = ev
+        .iter()
+        .filter(|e| matches!(&e.kind, EventKind::NodeAdded { by, .. } if *by == agentgraph_core::event::Origin::Agent))
+        .count();
+    assert_eq!(con, 3);
+}

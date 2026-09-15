@@ -198,8 +198,12 @@ impl Runner {
                     continue;
                 }
                 let id = spec.id.clone();
-                let (title, agent, deps) =
-                    (spec.title.clone(), spec.agent.clone(), spec.deps.clone());
+                let (title, agent, deps, model) = (
+                    spec.title.clone(),
+                    spec.agent.clone(),
+                    spec.deps.clone(),
+                    spec.model.clone(),
+                );
                 match self.graph.add(spec) {
                     Ok(()) => {
                         added = true;
@@ -210,6 +214,7 @@ impl Runner {
                                 agent,
                                 deps,
                                 by: Origin::Plan,
+                                model,
                             },
                         );
                     }
@@ -653,6 +658,7 @@ impl Runner {
                                 .get(&nid)
                                 .map(|n| n.spec.deps.clone())
                                 .unwrap_or_else(|| vec![id.clone()]);
+                            let model = self.graph.get(&nid).and_then(|n| n.spec.model.clone());
                             let unverified = self
                                 .graph
                                 .get(&nid)
@@ -664,6 +670,7 @@ impl Runner {
                                     agent,
                                     deps,
                                     by: Origin::Agent,
+                                    model,
                                 },
                             );
                             // Sau NodeAdded: fold bỏ qua dòng log của node chưa

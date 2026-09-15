@@ -9,6 +9,37 @@ headless trên máy bạn. Việc của agentgraph là: **lập lịch** node n�
 sau, **cô lập** mỗi agent trong một git worktree riêng, **kiểm chứng** kết quả
 bằng lệnh thật, và **ghi lại** mọi thứ để xem lại hoặc hỏi lại.
 
+## Cách nhanh nhất: giao diện web
+
+```bash
+agentgraph web
+```
+
+```
+web đang chạy: http://127.0.0.1:7878/?token=caf92286...
+```
+
+Mở **đúng link đó** (có `?token=`) trong trình duyệt, rồi:
+
+1. **Thư mục project** — nhập đường dẫn project cần làm việc. Ô bên dưới báo
+   ngay nó có phải git repo đã có commit chưa.
+2. **Agent chính** — `claude` hoặc `codex`.
+3. **Model** — `sonnet` / `opus` / `fable` cho claude, hoặc tự nhập tên model.
+4. **Prompt** — viết việc cần làm cho **một** agent chính.
+5. Bấm **Chạy**.
+
+Agent chính có thể tự giao việc cho agent con. Graph mọc thêm ngay trên màn
+hình: node đang chạy nhấp nháy và hiện việc agent đang làm, mũi tên nối node
+cha với node con, dấu `⚙` đánh dấu node do agent tự tạo. Bấm vào một node để
+xem agent, model, thư mục worktree, chi phí và log trực tiếp. Nút **Dừng** huỷ
+cả lượt chạy.
+
+> Đừng mở thẳng file `crates/cli/assets/index.html` — trang cần server phía
+> sau và sẽ báo "không nối được tới agentgraph". Luôn mở link server in ra.
+
+Muốn lặp lại cùng một quy trình, hay chạy trong CI, thì viết plan TOML — xem
+[mục 3](#3-lượt-chạy-đầu-tiên-từng-bước) trở đi.
+
 ---
 
 ## Mục lục
@@ -236,13 +267,24 @@ Trong log: `→` là agent gọi tool, `·` là agent nói, `⚙` là đề ngh�
 
 ### Web
 
+Có hai cách mở giao diện web:
+
+| Lệnh | Dùng khi |
+| --- | --- |
+| `agentgraph web` | muốn **chạy từ trình duyệt**: gõ prompt, chọn agent/model/thư mục, bấm Chạy. Một server giữ được nhiều lượt chạy, chọn qua ô trên cùng |
+| `agentgraph run plan.toml --web` | đã có plan và chỉ muốn **xem** lượt chạy đó trong trình duyệt thay vì TUI |
+
 ```bash
-agentgraph run plan.toml --web --port 7878
-# mở http://127.0.0.1:7878
+agentgraph web --port 7878 --root ~/code/project-cua-ban
 ```
 
-Graph xong, trang web **vẫn mở** để xem lại; `Ctrl-C` để thoát. Web chỉ lắng
-nghe `127.0.0.1`, không lộ ra mạng.
+Server in ra link có `?token=` — mở đúng link đó. Graph xong, trang **vẫn mở**
+để xem lại; `Ctrl-C` trong terminal để tắt server. Mỗi lần khởi động là một
+token mới, nên link cũ hết tác dụng. Server chỉ lắng nghe `127.0.0.1`.
+
+Trên graph: khung vàng nhấp nháy là agent đang chạy (kèm số giây và việc nó
+đang làm), xanh lá là xong, đỏ là hỏng; mũi tên nét đứt chuyển động là việc
+đang được chuyển cho node đang chạy.
 
 ### Chạy trong CI hoặc pipe
 
@@ -581,8 +623,13 @@ Cờ này áp cho **claude**. **codex** luôn chạy với sandbox `workspace-wr
   mạng. Không chạy trên máy chứa bí mật quan trọng mà chưa hiểu điều này.
 - Mọi đề nghị sửa graph của agent đều bị validate: id không thoát được thư mục,
   agent lạ bị từ chối, không tạo được vòng tròn, có trần số node.
-- Huỷ (`q`, `Ctrl-C`) giết **cả cây tiến trình** của agent và của verifier,
-  không để tiến trình con chạy mồ côi.
+- Huỷ (`q`, `Ctrl-C`, nút **Dừng** trên web) giết **cả cây tiến trình** của
+  agent và của verifier — kể cả lệnh codex chạy trong sandbox riêng. Đã kiểm
+  bằng codex thật đang chạy `sleep` trong sandbox.
+- Giao diện web đòi **token** in ra terminal cho mọi API, và từ chối header
+  `Host` lạ. Lý do: nút Chạy khởi động agent chạy lệnh shell, mà mọi trang web
+  khác đang mở trong trình duyệt đều gửi được request tới `127.0.0.1`. Không
+  chia sẻ link có token cho người khác.
 
 ---
 
@@ -628,6 +675,9 @@ Thêm `.agentgraph/` vào `.gitignore` của project để không lỡ commit ch
 | agent không thấy thay đổi mới nhất của bạn | thay đổi chưa commit | commit trước khi chạy — worktree tách từ commit hiện tại |
 | `merge đụng độ, agent phải tự xử lý` | hai node trước sửa cùng chỗ | bình thường; agent node sau được báo. Muốn tránh thì chia phạm vi file rõ hơn trong `task` |
 | web: cổng đã bị dùng | cổng `7878` bận | `--port 7879` |
+| web: "không nối được tới agentgraph" | mở thẳng file `index.html` | chạy `agentgraph web`, mở link nó in ra |
+| web: "thiếu hoặc sai token" | mở `http://127.0.0.1:7878` không có token, hoặc server đã khởi động lại | mở lại đúng link mới nhất trong terminal |
+| web: nút Chạy báo "web này chỉ để xem" | trang được mở bằng `run --web` / `replay --web` | dùng `agentgraph web` |
 | `ask`: worktree đã bị xoá | đã dọn dẹp trước khi hỏi | không khôi phục được session trong worktree; chạy lại node |
 | chi phí codex trông thấp/cao lạ | codex chỉ báo token, USD là ước lượng | đối chiếu với trang billing của OpenAI |
 
@@ -643,6 +693,7 @@ agentgraph doctor
 agentgraph run [PLAN] [--goal G] [--agent claude|codex] [--root DIR]
                [--parallel N=3] [--budget USD=20] [--timeout-min M=30]
                [--permission-mode MODE=acceptEdits] [--plain | --web [--port 7878]]
+agentgraph web [--port 7878] [--root DIR]
 agentgraph runs [--root DIR]
 agentgraph replay EVENTS [--plain | --web [--port 7878]]
 agentgraph ask EVENTS NODE QUESTION [--plain]
@@ -710,6 +761,18 @@ hai bản cùng một quy tắc, một Rust một JS, chắc chắn lệch nhau.
 stream `--json` nhưng dạng map trong file session; `codex exec resume` từ chối
 `--sandbox` và `-C` mà `codex exec` thường nhận. Cả hai chỉ lộ ra khi chạy thật.
 
+**Huỷ đi theo cây cha–con, không theo process group.** Sandbox của codex chạy
+lệnh bằng `bwrap --new-session`, tức tách sang session riêng — `kill -<pgid>`
+không với tới, và lần huỷ đầu tiên với codex thật để lại `sleep` sống mồ côi.
+Giờ agentgraph đóng băng cả cây (`SIGSTOP`), gom lại toàn bộ hậu duệ, rồi mới
+giết. Thứ tự quan trọng: giết agent trước thì con của nó bị chuyển về init và
+mất dấu.
+
+**Web có token dù chỉ lắng nghe `127.0.0.1`.** Nút Chạy khởi động agent chạy
+lệnh shell. Mọi trang web khác đang mở đều gửi được request tới `127.0.0.1`, và
+DNS rebinding còn đọc được phản hồi. Token in ra terminal chặn trường hợp đầu,
+kiểm tra header `Host` chặn trường hợp sau.
+
 ---
 
 ## 15. Giới hạn đã biết
@@ -726,3 +789,10 @@ stream `--json` nhưng dạng map trong file session; `codex exec resume` từ c
   lý.
 - **Không tự dọn** worktree, branch hay log — xem [mục 11](#11-dọn-dẹp).
 - **`--budget` không cắt node đang chạy**, chỉ ngừng nạp node mới.
+- **Node codex chưa hiện việc đang làm cho tới khi lệnh đầu tiên xong.** Codex
+  báo sự kiện khi một lệnh kết thúc, nên trong lúc nó chạy một lệnh dài, node
+  hiện "đang khởi động…" (đồng hồ vẫn chạy). Claude báo từng tool call nên không
+  gặp chuyện này.
+- **Web chỉ giữ các lượt chạy khởi động trong phiên server hiện tại.** Tắt
+  server là mất danh sách; lượt cũ vẫn xem được bằng `agentgraph runs` /
+  `replay --web`.

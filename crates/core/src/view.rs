@@ -25,8 +25,19 @@ pub struct NodeView {
     pub summary: String,
     #[serde(skip)]
     pub started: Option<DateTime<Utc>>,
+    /// Như `started` nhưng serialize được: ảnh chụp `View` gửi cho trình duyệt
+    /// phải mang nó, nếu không mở trang khi node đã chạy thì đồng hồ đứng im.
+    pub started_ms: Option<i64>,
     pub elapsed_s: u64,
     pub lines: Vec<String>,
+    pub model: Option<String>,
+    /// Thư mục agent đang làm việc (worktree riêng hoặc gốc repo).
+    pub workspace: Option<String>,
+    /// Việc gần nhất agent làm — một câu nói hoặc một lần gọi tool. Đây là
+    /// thứ người xem graph muốn thấy trên node: "nó đang làm gì ngay lúc này".
+    /// Không lấy ghi chú hệ thống (rate limit, verifier) vì chúng lặp liên tục
+    /// và che mất hoạt động thật của agent.
+    pub last: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -85,6 +96,11 @@ impl View {
                     by_agent: n.by_agent,
                     cost: n.cost,
                     elapsed_s: n.elapsed_s,
+                    model: n.model.clone(),
+                    workspace: n.workspace.clone(),
+                    last: n.last.clone(),
+                    summary: n.summary.clone(),
+                    started_ms: n.started_ms,
                 })
                 .collect(),
             total_cost: self.total_cost,
@@ -102,6 +118,7 @@ impl View {
                 agent,
                 deps,
                 by,
+                model,
             } => {
                 let Some(id) = node else { return };
                 if !self.nodes.contains_key(&id) {
@@ -119,8 +136,12 @@ impl View {
                         cost: 0.0,
                         summary: String::new(),
                         started: None,
+                        started_ms: None,
                         elapsed_s: 0,
                         lines: Vec::new(),
+                        model: model.clone(),
+                        workspace: None,
+                        last: String::new(),
                     },
                 );
             }
@@ -129,6 +150,7 @@ impl View {
                     n.state = state.clone();
                     if state == "running" {
                         n.started = Some(ev.at);
+                        n.started_ms = Some(ev.at.timestamp_millis());
                     }
                     if let Some(start) = n.started {
                         if state == "done" || state == "failed" || state == "skipped" {
@@ -137,14 +159,21 @@ impl View {
                     }
                 }
             }
-            EventKind::AgentText { text } => self.push(node, format!("· {text}")),
-            EventKind::AgentTool { name, detail } => self.push(node, format!("→ {name} {detail}")),
+            EventKind::AgentText { text } => self.activity(node, format!("· {text}")),
+            EventKind::AgentTool { name, detail } => {
+                self.activity(node, format!("→ {name} {detail}"))
+            }
             EventKind::AgentRaw { stream, line } => {
                 if stream == "stderr" {
                     self.push(node, format!("! {line}"));
                 }
             }
-            EventKind::Workspace { action, path } => self.push(node, format!("⌂ {action}: {path}")),
+            EventKind::Workspace { action, path } => {
+                if let Some(n) = node.as_ref().and_then(|i| self.nodes.get_mut(i)) {
+                    n.workspace = Some(path.clone());
+                }
+                self.push(node, format!("⌂ {action}: {path}"))
+            }
             EventKind::NodeFinished {
                 ok,
                 cost_usd,
@@ -185,6 +214,20 @@ impl View {
                 self.push(node, format!("i {text}"));
             }
         }
+    }
+
+    /// Như `push`, nhưng đây là việc agent làm nên cũng cập nhật `last`.
+    fn activity(&mut self, node: Option<String>, line: String) {
+        if let Some(n) = node.as_ref().and_then(|i| self.nodes.get_mut(i)) {
+            // Một dòng trên node graph: bỏ xuống dòng, cắt ngắn.
+            let one = line.replace('\n', " ");
+            n.last = if one.chars().count() > 90 {
+                format!("{}…", one.chars().take(90).collect::<String>())
+            } else {
+                one
+            };
+        }
+        self.push(node, line);
     }
 
     fn push(&mut self, node: Option<String>, line: String) {
@@ -235,6 +278,13 @@ pub struct NodeMeta {
     pub by_agent: bool,
     pub cost: f64,
     pub elapsed_s: u64,
+    pub model: Option<String>,
+    pub workspace: Option<String>,
+    pub last: String,
+    pub summary: String,
+    /// Mili-giây Unix lúc node bắt đầu chạy — để giao diện tự đếm giây khi node
+    /// còn đang chạy (`elapsed_s` chỉ có sau khi node kết thúc).
+    pub started_ms: Option<i64>,
 }
 
 /// Một lần cập nhật đẩy xuống trình duyệt.
@@ -282,6 +332,7 @@ mod tests {
                 agent: "fake".into(),
                 deps: vec![],
                 by: Origin::Plan,
+                model: None,
             },
         ));
         let (n1, l1) = v.apply_tracked(&ev(
@@ -313,21 +364,67 @@ mod tests {
                 agent: "claude".into(),
                 deps: vec![],
                 by: Origin::Agent,
+                model: None,
             },
         ));
         v.apply(&ev(
             2,
             Some("a"),
             EventKind::AgentText {
-                text: "dài".into()
+                text: "dòng cũ".into(),
+            },
+        ));
+        v.apply(&ev(
+            3,
+            Some("a"),
+            EventKind::AgentTool {
+                name: "Edit".into(),
+                detail: "src/api.rs".into(),
             },
         ));
         let m = v.meta();
         assert_eq!(m.nodes.len(), 1);
         assert_eq!(m.nodes[0].agent, "claude");
         assert!(m.nodes[0].by_agent);
+        // Được mang đúng một dòng hoạt động mới nhất để vẽ lên node...
+        assert_eq!(m.nodes[0].last, "→ Edit src/api.rs");
+        // ...nhưng không mang lịch sử log.
         let json = serde_json::to_string(&m).unwrap();
-        assert!(!json.contains("dài"), "meta không được mang theo log");
+        assert!(
+            !json.contains("dòng cũ"),
+            "meta không được mang theo lịch sử log"
+        );
+    }
+
+    /// Mở trang web khi node ĐÃ đang chạy: trình duyệt nhận ảnh chụp `View` đầy
+    /// đủ chứ không nhận patch, nên thời điểm bắt đầu phải nằm trong chính ảnh
+    /// chụp — nếu không đồng hồ của node đang chạy đứng im.
+    #[test]
+    fn anh_chup_view_mang_thoi_diem_bat_dau_cua_node_dang_chay() {
+        let mut v = View::default();
+        v.apply(&ev(
+            1,
+            Some("a"),
+            EventKind::NodeAdded {
+                title: "a".into(),
+                agent: "fake".into(),
+                deps: vec![],
+                by: Origin::Plan,
+                model: None,
+            },
+        ));
+        v.apply(&ev(
+            2,
+            Some("a"),
+            EventKind::NodeState {
+                state: "running".into(),
+            },
+        ));
+        let json: serde_json::Value = serde_json::to_value(&v).unwrap();
+        assert!(
+            json["nodes"]["a"]["started_ms"].is_i64(),
+            "ảnh chụp thiếu started_ms: {json}"
+        );
     }
 
     #[test]
@@ -342,6 +439,7 @@ mod tests {
                 agent: "fake".into(),
                 deps: vec![],
                 by: Origin::Plan,
+                model: None,
             },
         );
         e1.at = t0;
