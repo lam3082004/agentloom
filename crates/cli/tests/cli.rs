@@ -364,6 +364,63 @@ fn runs_liet_ke_moi_nhat_truoc_va_khong_chet_vi_log_do_dang() {
     assert!(lines[1].contains("muc tieu cu"));
 }
 
+/// Ctrl-C thật (SIGINT) khi graph đã xong nhanh (không còn gì để giết) không
+/// được bắt tiến trình `--web` ngủ đủ 3 giây cố định trước khi thoát — đó là
+/// độ trễ vô ích áp cho MỌI lần huỷ, kể cả khi chẳng có gì phải chờ.
+#[test]
+fn sigint_web_khong_ngu_co_dinh_khi_khong_con_gi_de_giet() {
+    let d = tmp();
+    // Plan không SLEEP: hai node fake xong gần như tức khắc.
+    let p = viet_plan(&d.0, "p.toml", PLAN_HAI_NODE);
+    let port = cong_trong();
+    let mut child = Command::new(BIN)
+        .args([
+            "run",
+            p.to_str().unwrap(),
+            "--web",
+            "--port",
+            &port.to_string(),
+        ])
+        .current_dir(&d.0)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+
+    // Chờ graph xong hẳn (web vẫn mở phục vụ) trước khi gửi SIGINT — đúng
+    // kịch bản "mọi thứ đã xong, không còn gì phải giết".
+    let het = Instant::now() + Duration::from_secs(30);
+    let mut thay_xong = false;
+    while Instant::now() < het {
+        if let Some(body) = http_get(port, "/api/view") {
+            if body.contains("\"finished\":true") {
+                thay_xong = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(thay_xong, "graph phải xong trong 30s để test có ý nghĩa");
+
+    let t = Instant::now();
+    Command::new("kill")
+        .args(["-INT", &pid.to_string()])
+        .status()
+        .unwrap();
+    let status = child.wait().unwrap();
+    let elapsed = t.elapsed();
+
+    assert!(!status.success(), "SIGINT phải làm tiến trình thoát khác 0");
+    // Không còn agent nào đang chạy lúc huỷ -> không có lý do gì phải chờ
+    // hết 3 giây cố định. Cho dư ra một chút cho CI chậm, nhưng phải rõ
+    // ràng dưới trần cũ.
+    assert!(
+        elapsed < Duration::from_millis(2500),
+        "SIGINT lúc không còn gì để giết mà vẫn mất {elapsed:?} — đang ngủ cố định thay vì chờ việc thật"
+    );
+}
+
 #[test]
 fn ask_bao_ro_khi_file_log_khong_ton_tai() {
     let o = Command::new(BIN)

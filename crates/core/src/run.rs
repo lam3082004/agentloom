@@ -106,6 +106,15 @@ pub struct Runner {
     /// đã huỷ vẫn phải đọc được giá trị `true` ngay, không chỉ node đang chạy
     /// lúc tín hiệu phát ra.
     cancel_tx: tokio::sync::watch::Sender<bool>,
+    /// Giữ sống MỘT receiver suốt đời Runner — không dùng tới, chỉ để không
+    /// bao giờ tụt về 0. `watch::Sender::send` khi KHÔNG còn receiver nào trả
+    /// lỗi và BỎ QUA giá trị gửi, không cập nhật gì cả (khác `send_replace`).
+    /// Giữa hai node (không có agent nào đang subscribe `req.cancel`), hoặc
+    /// lúc verifier đang chạy (verifier không subscribe), receiver count có
+    /// thể về 0 — canceller().send(true) từ CLI khi đó câm lặng mất tác dụng,
+    /// `cancelled` không bao giờ thành `true`. Bug thật: huỷ giữa lúc verifier
+    /// đang chạy hoặc giữa hai node không hề dừng được gì.
+    _cancel_guard: tokio::sync::watch::Receiver<bool>,
 }
 
 impl Runner {
@@ -127,7 +136,7 @@ impl Runner {
         };
         let worktrees = Worktrees::discover(&root, run.as_str()).await;
         let store = HarnessStore::new(worktrees.repo_root().join(".agentgraph"));
-        let (cancel_tx, _) = tokio::sync::watch::channel(false);
+        let (cancel_tx, cancel_guard) = tokio::sync::watch::channel(false);
         Ok(Self {
             graph: Graph::new(limits.max_nodes),
             log,
@@ -138,6 +147,7 @@ impl Runner {
             cursors: HashMap::new(),
             workspaces: HashMap::new(),
             cancel_tx,
+            _cancel_guard: cancel_guard,
         })
     }
 
@@ -523,29 +533,43 @@ impl Runner {
             Err(e) => return Some((false, format!("không chạy được verify: {e}"))),
         };
         let pgid = child.id();
+        let kill_pgid = || async move {
+            if let Some(p) = pgid {
+                // `kill` là builtin của sh, không thêm phụ thuộc mới.
+                let _ = tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(format!("kill -KILL -{p}"))
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .await;
+            }
+        };
         // Verifier cũng phải có trần thời gian: một lệnh treo (test chờ nhập,
         // server không thoát) từng làm đứng cả orchestrator, vô thời hạn.
-        let out =
-            match tokio::time::timeout(self.limits.node_timeout, child.wait_with_output()).await {
-                Ok(Ok(o)) => o,
-                Ok(Err(e)) => return Some((false, format!("verify lỗi: {e}"))),
-                Err(_) => {
-                    if let Some(p) = pgid {
-                        // `kill` là builtin của sh, không thêm phụ thuộc mới.
-                        let _ = tokio::process::Command::new("sh")
-                            .arg("-c")
-                            .arg(format!("kill -KILL -{p}"))
-                            .stdout(std::process::Stdio::null())
-                            .stderr(std::process::Stdio::null())
-                            .status()
-                            .await;
-                    }
-                    return Some((
-                        false,
-                        format!("verifier hết giờ sau {:?}", self.limits.node_timeout),
-                    ));
-                }
-            };
+        //
+        // Verifier PHẢI nghe tín hiệu huỷ như agent — trước đây nó không, nên
+        // q/Ctrl-C giữa lúc verifier đang chạy (ví dụ `cargo test` lâu) bị
+        // orchestrator lờ đi tới hết `node_timeout` (mặc định 30 phút) thay
+        // vì dừng ngay.
+        let mut cancel_rx = self.cancel_tx.subscribe();
+        let out = tokio::select! {
+            r = child.wait_with_output() => match r {
+                Ok(o) => o,
+                Err(e) => return Some((false, format!("verify lỗi: {e}"))),
+            },
+            _ = tokio::time::sleep(self.limits.node_timeout) => {
+                kill_pgid().await;
+                return Some((
+                    false,
+                    format!("verifier hết giờ sau {:?}", self.limits.node_timeout),
+                ));
+            }
+            _ = crate::agent::wait_for_cancel(&mut cancel_rx) => {
+                kill_pgid().await;
+                return Some((false, "verifier bị huỷ theo yêu cầu người dùng".into()));
+            }
+        };
         let mut msg = String::from_utf8_lossy(&out.stdout).into_owned();
         msg.push_str(&String::from_utf8_lossy(&out.stderr));
         Some((out.status.success(), msg.trim().chars().take(400).collect()))

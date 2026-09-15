@@ -198,14 +198,39 @@ async fn run(
     // bắt ở đây phòng khi không phải terminal tương tác.
     {
         let c = canceller.clone();
+        let mut cancel_rx = log.subscribe();
         tokio::spawn(async move {
             if tokio::signal::ctrl_c().await.is_ok() {
                 eprintln!("\nđang huỷ — giết tiến trình agent...");
                 let _ = c.send(true);
-                // Cho agent con vài giây để bị giết trước khi buộc thoát —
-                // mặt web phục vụ vô thời hạn sau khi graph xong nên không
-                // có gì khác tự làm tiến trình kết thúc.
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                // Chờ `run_finished` THẬT thay vì ngủ cố định 3 giây: khi
+                // không còn gì đang chạy, run_finished tới gần như ngay —
+                // ngủ cố định bắt người dùng chờ vô ích. Khi kill + verifier
+                // + ghi log chậm hơn dự kiến, ngủ cố định lại thoát TRƯỚC
+                // khi run_finished kịp ghi, mất bằng chứng lượt chạy đã bị
+                // huỷ. Vẫn giữ trần 30s để không treo mãi nếu event log kẹt.
+                let cho_xong = async {
+                    loop {
+                        match cancel_rx.recv().await {
+                            Ok(ev) => {
+                                if matches!(
+                                    ev.kind,
+                                    agentgraph_core::event::EventKind::RunFinished { .. }
+                                ) {
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                };
+                tokio::select! {
+                    _ = cho_xong => {}
+                    _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                        eprintln!("huỷ quá 30s — thoát cứng, run_finished có thể chưa kịp ghi");
+                    }
+                }
                 std::process::exit(130);
             }
         });

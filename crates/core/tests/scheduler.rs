@@ -827,6 +827,73 @@ isolate = "shared"
     );
 }
 
+/// Huỷ giữa chừng khi node đang chạy VERIFIER (không phải agent) phải giết
+/// verifier ngay, không chờ tới hết `node_timeout`. Agent (fake) xong gần
+/// tức khắc rồi verify chạy `sleep`; ta huỷ trong lúc đó và verifier phải
+/// bị giết cùng lúc — không phải sau khi tự hết giờ.
+#[tokio::test]
+async fn huy_giua_chung_giet_ca_verifier_dang_chay() {
+    let d = tmp();
+    let dau_vet = d.0.join("verifier-van-song.txt");
+    let log = EventLog::create(d.0.join("events.jsonl")).unwrap();
+    let mut rx = log.subscribe();
+    let r = Runner::new(
+        &d.0,
+        Limits {
+            max_parallel: 1,
+            // Cố tình đặt trần thời gian lớn hơn hẳn thời gian test chờ:
+            // nếu huỷ không giết được verifier, orchestrator sẽ đợi tới đây
+            // thay vì đợi tín hiệu huỷ, lộ đúng bug đang kiểm.
+            node_timeout: std::time::Duration::from_secs(20),
+            ..Default::default()
+        },
+        log.clone(),
+        agentgraph_core::ids::RunId::generate(),
+    )
+    .await
+    .unwrap();
+    let canceller = r.canceller();
+    let handle = tokio::spawn(r.execute(plan(&format!(
+        r#"
+goal = "g"
+[[node]]
+id = "a"
+title = "a"
+agent = "fake"
+task = "việc a"
+verify = "sh -c 'sleep 3; touch {}' & sleep 30"
+isolate = "shared"
+"#,
+        dau_vet.display()
+    ))));
+
+    // Đợi verifier chắc chắn đã bắt đầu chạy trước khi huỷ.
+    loop {
+        match rx.recv().await.unwrap().kind {
+            EventKind::NodeState { state } if state == "running" => break,
+            _ => continue,
+        }
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    canceller.send(true).unwrap();
+
+    // Huỷ khi verifier đang chạy phải kết thúc lượt chạy gần như ngay —
+    // không phải chờ tới `node_timeout` (20s) hay hết `sleep 30`.
+    let s = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("huỷ lúc verifier đang chạy phải giết verifier ngay, không chờ hết giờ")
+        .unwrap()
+        .unwrap();
+    assert_eq!(s.failed, 1, "node có verifier bị huỷ giữa chừng phải HỎNG");
+    assert!(!s.ok);
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !dau_vet.exists(),
+        "verifier phải bị giết khi huỷ, không được chạy tiếp tới lúc ghi file"
+    );
+}
+
 /// Hai node song song ghi CÙNG một file với nội dung khác nhau; node thứ ba
 /// phụ thuộc cả hai thì merge nhánh thứ hai vào worktree của nó sẽ đụng độ.
 /// Trước đây orchestrator chỉ `git merge --abort` rồi ghi Note vào log — agent

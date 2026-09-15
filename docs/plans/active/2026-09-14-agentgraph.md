@@ -110,6 +110,49 @@ graph tự mọc lúc chạy.
   `agent::wait_for_cancel` (treo vĩnh viễn khi sender rớt thay vì báo huỷ),
   có test hồi quy `khong_ai_giu_sender_thi_khong_duoc_coi_la_da_huy`.
 
+## QA vòng hai (2026-09-15) — nghi ngờ 79 test xanh, tìm thêm 2 bug thật
+
+- **Ctrl-C thật (SIGINT) ở `--plain`/`--web` ngủ cố định 3 giây rồi
+  `std::process::exit(130)`, bất kể đã xong hay chưa.** Xác nhận bằng SIGINT
+  thật (`kill -INT`) vào tiến trình `--web` với graph đã chạy xong: luôn mất
+  ~3.0s để thoát dù không còn gì phải giết — `sigint_web_khong_ngu_co_dinh_khi_khong_con_gi_de_giet`
+  (`crates/cli/tests/cli.rs`) đỏ (3.02s) trước khi sửa. Sửa: chờ `run_finished`
+  thật qua kênh event log, trần an toàn 30s thay vì ngủ mù. Sau sửa test
+  xanh trong 0.2s. (`crates/cli/src/main.rs`, hàm `run`.)
+- **Bug gốc nghiêm trọng hơn: verifier hoàn toàn không nghe được tín hiệu
+  huỷ.** Hai nguyên nhân cộng lại:
+  1. `verify()` trong `run.rs` không hề subscribe kênh `cancel_tx` — chỉ có
+     trần `node_timeout` (mặc định 30 phút). Huỷ giữa lúc verifier đang chạy
+     (`cargo test` lâu chẳng hạn) bị lờ đi tới hết giờ thay vì dừng ngay.
+  2. Ngay cả khi sửa (1), `canceller().send(true)` gọi đúng lúc KHÔNG còn
+     receiver nào sống (không có agent nào đang `select!` trên
+     `req.cancel` — ví dụ đúng lúc verifier chạy, hoặc giữa hai node) thì
+     `tokio::sync::watch::Sender::send` trả lỗi và **bỏ qua giá trị gửi**,
+     khác hẳn `send_replace`. `cancelled` không bao giờ thành `true`, huỷ
+     câm lặng mất tác dụng dù không có lỗi nào hiện ra.
+  Test hồi quy `huy_giua_chung_giet_ca_verifier_dang_chay`
+  (`crates/core/tests/scheduler.rs`) đỏ trước khi sửa (verifier chạy tới hết
+  `node_timeout` 20s thay vì bị huỷ ngay — hoặc `canceller.send` panic với
+  `SendError` khi chưa sửa nguyên nhân (2)). Sửa: giữ một receiver sống suốt
+  đời `Runner` (field `_cancel_guard`) để `send` không bao giờ câm lặng, và
+  cho `verify()` `select!` trên `wait_for_cancel` giống agent, giết process
+  group của verifier ngay khi bị huỷ. Sau sửa test xanh trong 0.8s, không để
+  lại tiến trình mồ côi (kiểm bằng file đánh dấu không xuất hiện).
+- Đã kiểm thêm, KHÔNG thấy bug: huỷ trong TUI (`q`) — `run_finished` ghi
+  xong trước khi tiến trình thoát, không orphan process (kiểm bằng pty thật
+  + `ps`); huỷ khi còn node chưa chạy — node đó dừng ở state `blocked`, không
+  crash, nhưng KHÔNG được đếm vào `done`/`hỏng`/`bỏ qua` trong `runs` (tổng
+  nhỏ hơn số node thật) — hành vi có từ trước (cũng xảy ra khi chạm ngân
+  sách), không phải bug mới của tính năng huỷ, chưa sửa vì ngoài phạm vi bốn
+  tính năng đang audit; merge đụng độ với một trong nhiều dep, và với node
+  `isolate = shared` (đúng là không merge, vì cwd dùng chung không có gì để
+  merge); `ask` với node `shared`, node do agent spawn, node hỏng, log/thư
+  mục `runs` rỗng hoặc lạ tên — tất cả kiểm thủ công bằng fake adapter thật
+  (không tốn tiền) đều đúng như mô tả.
+- CHƯA kiểm được: `ask` resume một session **codex thật** (chỉ kiểm được
+  qua code review + test log giả — không chạy agent thật để tiết kiệm ngân
+  sách phiên, xem báo cáo QA cuối buổi).
+
 ## Chạy lại kiểm chứng
 
 ```bash

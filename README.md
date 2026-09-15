@@ -115,10 +115,13 @@ cùng một thứ tiếng.
   chỉ nằm im trong Note của event log — nhưng agent vẫn phải TỰ xử lý đụng độ
   (đọc branch, merge tay); orchestrator không tự động giải quyết.
 - Huỷ giữa chừng (q trong TUI, Ctrl-C) giết cả process group của tiến trình
-  agent, không chỉ pid trực tiếp — đã test bằng tiến trình `sleep` thật. Vẫn
-  có khoảng trễ vài trăm ms giữa lúc gửi tín hiệu và lúc `kill -KILL` có hiệu
-  lực; không có gì đảm bảo tuyệt đối cho tiến trình chết ngay lập tức trước
-  khi kịp đẻ thêm con.
+  agent VÀ của verifier (không chỉ agent) — đã test bằng tiến trình `sleep`
+  thật. Vẫn có khoảng trễ vài trăm ms giữa lúc gửi tín hiệu và lúc `kill
+  -KILL` có hiệu lực; không có gì đảm bảo tuyệt đối cho tiến trình chết ngay
+  lập tức trước khi kịp đẻ thêm con.
+- Ctrl-C thật (SIGINT, khác phím `q` trong TUI) ở `--plain`/`--web` chờ
+  `run_finished` ghi xong rồi mới thoát, có trần 30 giây phòng khi event log
+  kẹt — không còn ngủ cố định 3 giây bất kể đã xong hay chưa.
 - `agentgraph ask` resume agent cũ đúng session/worktree đã lưu, nhưng chưa
   kiểm được bằng agent thật là claude/codex thật sự hiểu ngữ cảnh cũ tốt tới
   đâu — chỉ xác nhận cờ CLI đúng và luồng orchestrator chạy được.
