@@ -14,6 +14,7 @@ use super::{AgentAdapter, AgentOutcome, AgentRequest};
 use crate::event::{EventKind, EventLog};
 use async_trait::async_trait;
 use serde_json::Value;
+use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -97,6 +98,7 @@ impl AgentAdapter for CodexAdapter {
         let mut lines = BufReader::new(stdout).lines();
         let price = Price::default();
 
+        let mut da_hien: HashMap<String, String> = HashMap::new();
         let parse = async {
             while let Some(line) = lines.next_line().await? {
                 if line.trim().is_empty() {
@@ -112,7 +114,7 @@ impl AgentAdapter for CodexAdapter {
                     );
                     continue;
                 };
-                handle(&v, &req, log, &mut out, price);
+                handle(&v, &req, log, &mut out, price, &mut da_hien);
             }
             Ok::<_, anyhow::Error>(())
         };
@@ -210,7 +212,16 @@ fn codex_args(req: &AgentRequest, prompt: &str) -> Vec<std::ffi::OsString> {
     a
 }
 
-fn handle(v: &Value, req: &AgentRequest, log: &EventLog, out: &mut AgentOutcome, price: Price) {
+/// `da_hien`: dòng tool đã hiện của từng item, theo id. Codex phát `item.started`
+/// rồi `item.completed` cho CÙNG một item — không nhớ thì mỗi lệnh hiện hai dòng.
+fn handle(
+    v: &Value,
+    req: &AgentRequest,
+    log: &EventLog,
+    out: &mut AgentOutcome,
+    price: Price,
+    da_hien: &mut HashMap<String, String>,
+) {
     let node = Some(req.node.clone());
     match v.get("type").and_then(|t| t.as_str()) {
         Some("thread.started") => {
@@ -230,11 +241,15 @@ fn handle(v: &Value, req: &AgentRequest, log: &EventLog, out: &mut AgentOutcome,
                 .and_then(|t| t.as_str())
                 .unwrap_or("");
             if ty != "agent_message" {
+                let detail = item.map(item_detail).unwrap_or_default();
+                if let Some(id) = item.and_then(|i| i.get("id")).and_then(|x| x.as_str()) {
+                    da_hien.insert(id.to_string(), format!("{ty}\u{0}{detail}"));
+                }
                 log.emit(
                     node,
                     EventKind::AgentTool {
                         name: ty.to_string(),
-                        detail: item.map(item_detail).unwrap_or_default(),
+                        detail,
                     },
                 );
             }
@@ -257,13 +272,23 @@ fn handle(v: &Value, req: &AgentRequest, log: &EventLog, out: &mut AgentOutcome,
                 }
             } else {
                 // command_execution / file_change / reasoning / ... đều vào đây.
-                log.emit(
-                    node,
-                    EventKind::AgentTool {
-                        name: ty.to_string(),
-                        detail: item.map(item_detail).unwrap_or_default(),
-                    },
-                );
+                let detail = item.map(item_detail).unwrap_or_default();
+                // Chỉ bỏ khi Y HỆT dòng đã hiện lúc bắt đầu. Khác thì vẫn hiện:
+                // `file_change` chỉ biết file nào bị đổi khi đã xong.
+                let trung = item
+                    .and_then(|i| i.get("id"))
+                    .and_then(|x| x.as_str())
+                    .and_then(|id| da_hien.remove(id))
+                    .is_some_and(|cu| cu == format!("{ty}\u{0}{detail}"));
+                if !trung {
+                    log.emit(
+                        node,
+                        EventKind::AgentTool {
+                            name: ty.to_string(),
+                            detail,
+                        },
+                    );
+                }
             }
         }
         Some("turn.completed") => {
@@ -446,6 +471,7 @@ mod tests {
                 &l,
                 &mut out,
                 Price::default(),
+                &mut HashMap::new(),
             );
         }
         assert_eq!(
@@ -496,6 +522,7 @@ mod tests {
             &l,
             &mut out,
             Price::default(),
+            &mut HashMap::new(),
         );
         let ev = rx
             .try_recv()
@@ -508,6 +535,71 @@ mod tests {
             other => panic!("phải là AgentTool, được {other:?}"),
         }
         std::fs::remove_dir_all(d).ok();
+    }
+
+    /// Gom mọi AgentTool phát ra khi đưa lần lượt các dòng stream vào `handle`.
+    fn cac_dong_tool(lines: &[&str]) -> Vec<(String, String)> {
+        let (l, d) = log();
+        let mut rx = l.subscribe();
+        let mut out = AgentOutcome::default();
+        let r = req();
+        let mut da_hien = HashMap::new();
+        for line in lines {
+            handle(
+                &serde_json::from_str(line).unwrap(),
+                &r,
+                &l,
+                &mut out,
+                Price::default(),
+                &mut da_hien,
+            );
+        }
+        let mut v = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let EventKind::AgentTool { name, detail } = ev.kind {
+                v.push((name, detail));
+            }
+        }
+        std::fs::remove_dir_all(d).ok();
+        v
+    }
+
+    /// Bug thật: sau khi thêm `item.started`, mỗi lệnh codex hiện HAI dòng log
+    /// giống hệt nhau — một lúc bắt đầu, một lúc xong.
+    #[test]
+    fn lenh_bat_dau_roi_xong_chi_hien_mot_dong() {
+        let dong = cac_dong_tool(&[
+            r#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"cargo test -q","status":"in_progress"}}"#,
+            r#"{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"cargo test -q","exit_code":0,"status":"completed"}}"#,
+        ]);
+        assert_eq!(
+            dong,
+            vec![("command_execution".to_string(), "cargo test -q".to_string())]
+        );
+    }
+
+    /// Không được mất thông tin: lúc xong mới biết file nào bị đổi thì dòng lúc
+    /// xong khác dòng lúc bắt đầu — phải giữ cả hai.
+    #[test]
+    fn luc_xong_co_them_thong_tin_thi_van_hien() {
+        let dong = cac_dong_tool(&[
+            r#"{"type":"item.started","item":{"id":"item_2","type":"file_change","status":"in_progress"}}"#,
+            r#"{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"/w/src/api.rs","kind":"update"}],"status":"completed"}}"#,
+        ]);
+        assert_eq!(dong.len(), 2, "{dong:?}");
+        assert_eq!(dong[1].1, "api.rs");
+    }
+
+    /// Hai lệnh khác nhau trùng nội dung (chạy test hai lần) vẫn là hai việc thật.
+    #[test]
+    fn hai_lenh_khac_id_trung_noi_dung_van_hien_du() {
+        let dong = cac_dong_tool(&[
+            r#"{"type":"item.started","item":{"id":"a","type":"command_execution","command":"cargo test -q"}}"#,
+            r#"{"type":"item.completed","item":{"id":"a","type":"command_execution","command":"cargo test -q"}}"#,
+            r#"{"type":"item.started","item":{"id":"b","type":"command_execution","command":"cargo test -q"}}"#,
+            r#"{"type":"item.completed","item":{"id":"b","type":"command_execution","command":"cargo test -q"}}"#,
+        ]);
+        assert_eq!(dong.len(), 2, "{dong:?}");
     }
 
     #[test]
@@ -524,6 +616,7 @@ mod tests {
             &l,
             &mut out,
             Price::default(),
+            &mut HashMap::new(),
         );
         assert!(
             rx.try_recv().is_err(),
@@ -581,6 +674,7 @@ mod tests {
             &l,
             &mut out,
             Price::default(),
+            &mut HashMap::new(),
         );
         assert!(!out.ok);
         assert_eq!(out.summary, "context limit");
