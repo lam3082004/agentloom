@@ -177,7 +177,8 @@
   /* ── chi tiết ───────────────────────────────────────────────── */
   .dh{padding:14px;border-bottom:1px solid var(--line2)}
   .dh .r1{display:flex;align-items:center;gap:10px}
-  .dh .ttl{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  /* Panel chi tiết là nơi DUY NHẤT xem được tên đầy đủ — xuống dòng thay vì cắt. */
+  .dh .ttl{font-size:15px;font-weight:700;overflow-wrap:anywhere;flex:1;min-width:0}
   .dh .sub{color:var(--ink3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .stats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:12px}
   .stat{background:var(--raised);border:1px solid var(--line2);border-radius:9px;padding:6px 9px;min-width:0}
@@ -405,11 +406,11 @@ function toast(msg){
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), 5000);
 }
 
-if (location.protocol === "file:") {
-  banner("Trang này cần server của agentloom. Chạy <code>agentloom web</code> trong terminal rồi mở đúng link được in ra (có <code>?token=</code>).");
-  throw new Error("mở từ file://");
-}
-if (!TOKEN) banner("Thiếu token trong địa chỉ. Mở đúng link <code>http://127.0.0.1:…/?token=…</code> được in ra khi chạy <code>agentloom web</code>.");
+// Mở thẳng file thì không có server phía sau: chỉ hiện hướng dẫn và không gọi
+// API nào. Dừng bằng cờ chứ không `throw` — throw để lại lỗi đỏ trong console.
+const FILE_MODE = location.protocol === "file:";
+if (FILE_MODE) banner("Trang này cần server của agentloom. Chạy <code>agentloom web</code> trong terminal rồi mở đúng link được in ra (có <code>?token=</code>).");
+else if (!TOKEN) banner("Thiếu token trong địa chỉ. Mở đúng link <code>http://127.0.0.1:…/?token=…</code> được in ra khi chạy <code>agentloom web</code>.");
 
 async function api(path, opts = {}){
   const r = await fetch(path, { ...opts, headers: { "x-agentloom-token": TOKEN, "Content-Type": "application/json", ...(opts.headers || {}) } });
@@ -623,6 +624,10 @@ function selectNode(id){ sel = id; stickLog = true; schedule(); }
 
 // ── pan / zoom ────────────────────────────────────────────────────────────
 const W = 248, H = 96, GX = 70, GY = 22, PAD = 30;
+// Một tầng quá nhiều agent (agent chính giao việc cho 16 agent con) xếp một cột
+// thì graph cao vượt khung, "vừa khung" phải thu nhỏ tới mức không đọc nổi chữ.
+// Chia tầng đó thành nhiều cột phụ, mỗi cột tối đa MAX_ROWS agent.
+const MAX_ROWS = 6, GXS = 16;
 let tx = 0, ty = 0, k = 1, userMoved = false, lastBox = null;
 function applyTransform(){ $("stage").style.transform = `translate(${tx}px,${ty}px) scale(${k})`; }
 function fit(){
@@ -681,13 +686,21 @@ function layout(){
   };
   const cols = [];
   for (const id of view.order) { const l = L(id); (cols[l] = cols[l] || []).push(id); }
-  const rows = Math.max(1, ...cols.map(c => c.length));
+  const rows = Math.max(1, ...cols.map(c => Math.min(c.length, MAX_ROWS)));
   const pos = {};
-  cols.forEach((c, l) => {
-    const off = (rows - c.length) * (H + GY) / 2;
-    c.forEach((id, i) => { pos[id] = { x: PAD + l * (W + GX), y: PAD + off + i * (H + GY) }; });
+  let x = PAD;
+  cols.forEach(c => {
+    if (!c) return;
+    const sub = Math.ceil(c.length / MAX_ROWS);
+    c.forEach((id, i) => {
+      const s = Math.floor(i / MAX_ROWS), r = i % MAX_ROWS;
+      const inCol = Math.min(MAX_ROWS, c.length - s * MAX_ROWS);
+      const off = (rows - inCol) * (H + GY) / 2;
+      pos[id] = { x: x + s * (W + GXS), y: PAD + off + r * (H + GY) };
+    });
+    x += sub * W + (sub - 1) * GXS + GX;
   });
-  return { pos, w: PAD * 2 + cols.length * (W + GX) - GX, h: PAD * 2 + rows * (H + GY) - GY };
+  return { pos, w: x - GX + PAD, h: PAD * 2 + rows * (H + GY) - GY };
 }
 
 function renderGraph(){
@@ -816,7 +829,10 @@ function renderTop(){
   let r = 0, d = 0, f = 0, w = 0;
   for (const id of view.order) {
     const s = (view.nodes[id] || {}).state;
-    if (s === "running") r++; else if (s === "done") d++; else if (s === "failed") f++; else w++;
+    // "bỏ qua" là trạng thái kết thúc (sẽ không bao giờ chạy) — không phải
+    // "chờ" (sẽ chạy khi tới lượt). Gộp chung khiến lượt chạy đã xong vẫn
+    // hiện "N chờ" dù không còn gì đang chờ cả.
+    if (s === "running") r++; else if (s === "done") d++; else if (s === "failed") f++; else if (s !== "skipped") w++;
   }
   $("kRun").textContent = r; $("kDone").textContent = d; $("kFail").textContent = f; $("kWait").textContent = w;
   $("kCost").textContent = "$" + (view.total_cost || 0).toFixed(2);
@@ -834,9 +850,10 @@ function render(){ renderTop(); renderGraph(); renderAgents(); renderFeed(); ren
 
 // Đồng hồ: node đang chạy và tổng thời gian tự đếm giữa hai patch.
 setInterval(() => { if (view && !view.finished) schedule(); }, 1000);
-setInterval(refreshRuns, 3000);
+if (!FILE_MODE) setInterval(refreshRuns, 3000);
 
 (async () => {
+  if (FILE_MODE) return;
   try { meta = await api("/api/meta"); }
   catch (e) { if (TOKEN) banner("Không nối được tới agentloom. Kiểm tra server còn chạy không."); return; }
   if (meta.can_start) setupForm();

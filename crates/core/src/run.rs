@@ -40,7 +40,7 @@ fn protocol_block(store: &HarnessStore) -> String {
          `.agentloom/mutations.jsonl` trong thư mục làm việc. Mỗi dòng một lệnh:\n\
          \n\
          mkdir -p .agentloom && cat >> .agentloom/mutations.jsonl <<'JSONL'\n\
-         {\"op\":\"spawn\",\"id\":\"<ten-node>\",\"agent\":\"<claude hoac codex>\",\"task\":\"<viec>\",\"verify\":\"<lenh shell kiem chung>\"}\n\
+         {\"op\":\"spawn\",\"id\":\"<ten-node>\",\"agent\":\"<claude hoac codex>\",\"task\":\"<viec>\",\"verify\":\"<lenh shell kiem chung>\",\"model\":\"<model, tuy chon>\"}\n\
          {\"op\":\"write_skill\",\"name\":\"<ten>\",\"body\":\"<quy trinh tai su dung>\"}\n\
          {\"op\":\"write_memory\",\"key\":\"<ten>\",\"value\":\"<noi dung>\"}\n\
          JSONL\n\
@@ -50,6 +50,9 @@ fn protocol_block(store: &HarnessStore) -> String {
          Luôn kèm `verify`: lệnh shell thoát 0 khi và chỉ khi việc của node con\n\
          thật sự xong (ví dụ `python3 check.py`, `cargo test -q`). Không có nó thì\n\
          hệ điều phối chỉ còn tin lời node con.\n\
+         `model` chọn model cho node con (ví dụ `sonnet`, `opus`). Nếu việc được\n\
+         giao có chỉ định model cho node con thì PHẢI truyền; bỏ trống thì node con\n\
+         chạy model mặc định của agent.\n\
          \n\
          QUAN TRỌNG: khi được yêu cầu ghi lại một quy trình để tái sử dụng, PHẢI\n\
          dùng `write_skill` ở trên. ĐỪNG dùng cơ chế skill/memory riêng của bạn\n\
@@ -764,6 +767,12 @@ mod tests {
         assert!(
             p.contains("\"verify\""),
             "phải dạy agent kèm verify khi spawn"
+        );
+        // Chạy thật: được dặn cho agent con dùng sonnet, agent chính vẫn spawn
+        // không kèm model vì mẫu protocol không hề nhắc tới trường này.
+        assert!(
+            p.contains("\"model\""),
+            "phải dạy agent chọn model cho node con"
         );
         assert!(
             p.contains(".agentloom/mutations.jsonl"),
