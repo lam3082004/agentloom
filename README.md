@@ -789,10 +789,6 @@ kiểm tra header `Host` chặn trường hợp sau.
   lý.
 - **Không tự dọn** worktree, branch hay log — xem [mục 11](#11-dọn-dẹp).
 - **`--budget` không cắt node đang chạy**, chỉ ngừng nạp node mới.
-- **Node codex chưa hiện việc đang làm cho tới khi lệnh đầu tiên xong.** Codex
-  báo sự kiện khi một lệnh kết thúc, nên trong lúc nó chạy một lệnh dài, node
-  hiện "đang khởi động…" (đồng hồ vẫn chạy). Claude báo từng tool call nên không
-  gặp chuyện này.
 - **Web chỉ giữ các lượt chạy khởi động trong phiên server hiện tại.** Tắt
   server là mất danh sách; lượt cũ vẫn xem được bằng `agentgraph runs` /
   `replay --web`.

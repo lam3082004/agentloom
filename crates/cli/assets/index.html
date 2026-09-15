@@ -240,7 +240,10 @@ async function api(path, opts = {}) {
   let body = null;
   try { body = await r.json(); } catch (_) {}
   if (!r.ok) {
-    if (r.status === 401) banner("Token sai hoặc đã hết hạn (server đã khởi động lại). Mở lại link mới được in ra terminal.");
+    // Thiếu hẳn token thì banner "thiếu token" đã hiện sẵn lúc nạp trang —
+    // đè lên bằng thông báo "sai/hết hạn" sẽ làm người dùng tưởng nhầm họ đã
+    // có token đúng mà server chối, trong khi thật ra họ chưa hề có token.
+    if (r.status === 401 && TOKEN) banner("Token sai hoặc đã hết hạn (server đã khởi động lại). Mở lại link mới được in ra terminal.");
     throw new Error((body && body.error) || ("lỗi " + r.status));
   }
   return body;

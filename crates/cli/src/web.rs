@@ -247,7 +247,12 @@ fn host_hop_le(host: &str) -> bool {
         Some(rest) => rest.split(']').next().unwrap_or(""),
         None => host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host),
     };
-    matches!(ten, "127.0.0.1" | "localhost" | "::1")
+    // Host header không phân biệt hoa thường (RFC 9110 §4.2.3) — `LOCALHOST`
+    // hợp lệ y hệt `localhost`. So khớp chữ thường thì mới không chặn nhầm.
+    matches!(
+        ten.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
 }
 
 /// So sánh không để lộ thời gian: `==` dừng ở byte sai đầu tiên, đo được
@@ -830,6 +835,10 @@ mod tests {
             "localhost:7878",
             "[::1]:7878",
             "localhost",
+            // Bug thật: Host không phân biệt hoa thường (RFC 9110 §4.2.3) —
+            // so khớp chữ thường sai làm LOCALHOST bị chặn nhầm.
+            "LOCALHOST:7878",
+            "Localhost",
         ] {
             assert!(host_hop_le(ok), "{ok}");
         }

@@ -77,7 +77,7 @@ impl AgentAdapter for CodexAdapter {
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(l)) = lines.next_line().await {
-                if !l.trim().is_empty() {
+                if !l.trim().is_empty() && !la_thong_bao_stdin_vo_hai(&l) {
                     log2.emit(
                         Some(node2.clone()),
                         EventKind::AgentRaw {
@@ -163,6 +163,15 @@ impl AgentAdapter for CodexAdapter {
     }
 }
 
+/// Codex luôn in dòng này ra stderr khi không có stdin (agentgraph đóng hẳn
+/// stdin — xem `stdin(Stdio::null())` ở trên) — vô hại, không phải lỗi. Web
+/// và TUI tô đỏ mọi dòng `AgentRaw{stream:"stderr"}`, nên dòng này trông như
+/// một lỗi thật dù không phải. Chỉ lọc đúng dòng này, không lọc rộng hơn: mọi
+/// stderr khác vẫn phải hiện để không giấu lỗi thật của agent.
+fn la_thong_bao_stdin_vo_hai(line: &str) -> bool {
+    line.trim() == "Reading additional input from stdin..."
+}
+
 /// Dựng tham số dòng lệnh cho codex. Tách thành hàm thuần để test được mà
 /// không phải chạy codex thật.
 ///
@@ -207,6 +216,27 @@ fn handle(v: &Value, req: &AgentRequest, log: &EventLog, out: &mut AgentOutcome,
         Some("thread.started") => {
             if let Some(id) = v.get("thread_id").and_then(|s| s.as_str()) {
                 out.session = Some(id.to_string());
+            }
+        }
+        Some("item.started") => {
+            // Lệnh dài (vd `sleep 60`) chỉ có `item.completed` khi nó XONG,
+            // nên trong lúc chạy node hiện "đang khởi động…" dù việc đã bắt
+            // đầu từ lâu. `item.started` mang đúng lệnh/đích đang chạy —
+            // dùng nó để cập nhật hoạt động ngay từ lúc bắt đầu, không đợi
+            // xong. `agent_message` bỏ qua vì lúc bắt đầu chưa có nội dung.
+            let item = v.get("item");
+            let ty = item
+                .and_then(|i| i.get("type"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+            if ty != "agent_message" {
+                log.emit(
+                    node,
+                    EventKind::AgentTool {
+                        name: ty.to_string(),
+                        detail: item.map(item_detail).unwrap_or_default(),
+                    },
+                );
             }
         }
         Some("item.completed") => {
@@ -428,6 +458,77 @@ mod tests {
         // Ước lượng, không phải số do codex trả về.
         assert!(out.cost_usd > 0.0);
         assert!(out.ok);
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn loc_dung_dong_thong_bao_stdin_vo_hai_khong_loc_rong_hon() {
+        // Bug thật: dòng này hiện màu đỏ trên web/TUI như thể agent bị lỗi,
+        // dù codex luôn in nó khi stdin bị đóng — vô hại.
+        assert!(la_thong_bao_stdin_vo_hai(
+            "Reading additional input from stdin..."
+        ));
+        // Có khoảng trắng bao quanh (đầu dòng codex đôi khi in thêm) vẫn phải khớp.
+        assert!(la_thong_bao_stdin_vo_hai(
+            "  Reading additional input from stdin...  "
+        ));
+        // Không được lọc rộng hơn: lỗi thật, hay dòng chỉ gần giống, phải còn nguyên.
+        assert!(!la_thong_bao_stdin_vo_hai("Error: rate limit exceeded"));
+        assert!(!la_thong_bao_stdin_vo_hai(
+            "Reading additional input from stdin"
+        ));
+        assert!(!la_thong_bao_stdin_vo_hai(""));
+    }
+
+    #[test]
+    fn item_started_cap_nhat_hoat_dong_khi_lenh_con_dang_chay() {
+        // Bug thật: lệnh dài chỉ có item.completed lúc XONG, nên node hiện
+        // "đang khởi động…" suốt lúc lệnh đang chạy. item.started (nguyên
+        // văn từ codex-cli 0.153.2 khi `sleep 3 && echo done` đang chạy)
+        // phải cập nhật hoạt động ngay, không đợi lệnh xong.
+        let (l, d) = log();
+        let mut rx = l.subscribe();
+        let mut out = AgentOutcome::default();
+        let line = r#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/usr/bin/zsh -lc 'sleep 3 && echo done'","aggregated_output":"","exit_code":null,"status":"in_progress"}}"#;
+        handle(
+            &serde_json::from_str(line).unwrap(),
+            &req(),
+            &l,
+            &mut out,
+            Price::default(),
+        );
+        let ev = rx
+            .try_recv()
+            .expect("phải phát một event ngay khi lệnh bắt đầu");
+        match ev.kind {
+            EventKind::AgentTool { name, detail } => {
+                assert_eq!(name, "command_execution");
+                assert_eq!(detail, "/usr/bin/zsh -lc 'sleep 3 && echo done'");
+            }
+            other => panic!("phải là AgentTool, được {other:?}"),
+        }
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn item_started_cua_agent_message_khong_phat_gi() {
+        // Lúc bắt đầu agent_message chưa có nội dung — phát ra chỉ tạo dòng
+        // log rỗng vô nghĩa.
+        let (l, d) = log();
+        let mut rx = l.subscribe();
+        let mut out = AgentOutcome::default();
+        let line = r#"{"type":"item.started","item":{"id":"item_0","type":"agent_message"}}"#;
+        handle(
+            &serde_json::from_str(line).unwrap(),
+            &req(),
+            &l,
+            &mut out,
+            Price::default(),
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "agent_message lúc bắt đầu không nên phát event"
+        );
         std::fs::remove_dir_all(d).ok();
     }
 
