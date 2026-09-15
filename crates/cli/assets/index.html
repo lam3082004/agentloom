@@ -184,6 +184,8 @@
   .stat{background:var(--raised);border:1px solid var(--line2);border-radius:9px;padding:6px 9px;min-width:0}
   .stat span{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
   .stat b{display:block;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* Model kèm người chọn ("sonnet · agent “chinh” chọn") — cắt mất phần sau là mất ý. */
+  .stat b.wrap{white-space:normal;overflow-wrap:anywhere}
   .ws{margin-top:8px;display:flex;align-items:center;gap:6px;background:var(--raised);border:1px solid var(--line2);
       border-radius:9px;padding:6px 9px;min-width:0}
   .ws code{flex:1;min-width:0;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -226,6 +228,28 @@
   details.adv{margin-top:12px;border:1px solid var(--line2);border-radius:10px;padding:8px 12px}
   details.adv summary{cursor:pointer;font-weight:650;color:var(--ink2)}
 
+  /* ── lịch sử chạy ───────────────────────────────────────────── */
+  dialog.wide{width:min(860px,calc(100vw - 24px))}
+  .hist-tools{display:flex;gap:8px;flex-wrap:wrap}
+  .hist-tools .inp{flex:1;min-width:180px}
+  .hist-tools select.inp{flex:0 1 auto;width:auto}
+  .hist{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+  .hist li button{width:100%;display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:center;text-align:left;
+                  padding:9px 12px;border:1px solid var(--line2);border-radius:10px;background:var(--raised);cursor:pointer}
+  .hist li button:hover,.hist li button:focus-visible{border-color:var(--run)}
+  .hist li.cur button{border-color:var(--run);background:var(--run-soft)}
+  .hist .ic{grid-row:span 2;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:12px}
+  .hist .ic.live{background:var(--run-soft);color:var(--run)} .hist .ic.ok{background:var(--ok-soft);color:var(--ok)}
+  .hist .ic.bad{background:var(--bad-soft);color:var(--bad)} .hist .ic.stale{background:var(--wait-soft);color:var(--ink3)}
+  .hist .g{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .hist .when{color:var(--ink3);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .hist .meta{grid-column:2 / 4;display:flex;gap:10px;flex-wrap:wrap;color:var(--ink3);font-size:12px;min-width:0}
+  .hist .meta .dir{font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .hist .tag{padding:0 7px;border-radius:999px;background:var(--sunken);font-size:11px}
+  .hist .tag.now{background:var(--run-soft);color:var(--run)}
+  @media (max-width:520px){.hist li button{grid-template-columns:auto 1fr}.hist .when{grid-column:2}}
+  .pill.by-agent{background:var(--spawn-soft);color:var(--spawn)}
+
   .toast{position:fixed;right:16px;bottom:16px;max-width:420px;padding:10px 14px;border-radius:10px;background:var(--bad);
          color:#fff;box-shadow:var(--shadow);z-index:50}
 
@@ -256,6 +280,7 @@
     <div class="kpi"><b id="kWait">0</b><span>chờ</span></div>
     <div class="kpi cost"><b id="kCost">$0.00</b><span>chi phí</span></div>
   </div>
+  <button class="btn" id="histBtn" title="Lịch sử các lượt chạy">🕘 Lịch sử</button>
   <button class="btn danger" id="stopBtn" hidden>■ Dừng</button>
   <button class="btn primary" id="newBtn" hidden>+ Chạy mới</button>
 </header>
@@ -314,7 +339,7 @@
         <div class="r1"><span class="badge" id="dBadge"></span><span class="ttl" id="dId"></span><span class="st" id="dState"></span></div>
         <div class="sub" id="dTitle"></div>
         <div class="stats">
-          <div class="stat"><span>Model</span><b id="dModel"></b></div>
+          <div class="stat"><span>Model</span><b id="dModel" class="wrap"></b></div>
           <div class="stat"><span>Thời gian</span><b id="dTime"></b></div>
           <div class="stat"><span>Chi phí</span><b id="dCost"></b></div>
           <div class="stat"><span>Token vào / ra</span><b id="dTok"></b></div>
@@ -370,6 +395,23 @@ Nếu có nhiều module độc lập cần sửa, hãy giao mỗi module cho m�
       <span class="err" id="formErr" role="alert"></span>
       <button class="btn" value="cancel">Huỷ</button>
       <button class="btn primary" id="startBtn" value="default">▶ Chạy</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="histDlg" class="wide" aria-labelledby="histTitle">
+  <form method="dialog">
+    <div class="dlg-h"><h3 id="histTitle">Lịch sử chạy</h3><button class="btn ghost" value="cancel" aria-label="Đóng">✕</button></div>
+    <div class="dlg-b">
+      <div class="hist-tools">
+        <input class="inp" id="histQ" type="search" placeholder="Tìm theo mục tiêu, thư mục hoặc id…" spellcheck="false" autocomplete="off" aria-label="Tìm lượt chạy">
+        <select class="inp" id="histF" aria-label="Lọc trạng thái">
+          <option value="">Tất cả</option><option value="live">Đang chạy</option>
+          <option value="ok">Xong</option><option value="bad">Có lỗi</option><option value="stale">Dở dang</option>
+        </select>
+      </div>
+      <div class="hint" id="histCount"></div>
+      <ul class="hist" id="histList"></ul>
     </div>
   </form>
 </dialog>
@@ -433,13 +475,29 @@ function fmtDur(s){
   const hh = Math.floor(s / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
   return hh ? `${hh}:${String(mm).padStart(2,"0")}:${String(ss).padStart(2,"0")}` : `${mm}:${String(ss).padStart(2,"0")}`;
 }
+/** Lượt chạy nạp từ lịch sử mà chưa kết thúc: tiến trình chạy nó đã chết
+ *  (hoặc là phiên server khác). Đồng hồ dừng ở event cuối thay vì đếm mãi. */
+function runInfo(id){ return runs.find(x => x.id === id); }
+function isStale(r){ return !!(r && r.past && !r.finished); }
+function clockNow(){
+  if (view && isStale(runInfo(runId))) {
+    const last = view.feed && view.feed.length ? view.feed[view.feed.length - 1].at_ms : 0;
+    return Math.max(last || 0, view.started_ms || 0);
+  }
+  return Date.now();
+}
 function nodeSecs(n){
-  if (n.state === "running" && n.started_ms) return (Date.now() - n.started_ms) / 1000;
+  if (n.state === "running" && n.started_ms) return (clockNow() - n.started_ms) / 1000;
   return n.elapsed_s || 0;
 }
 function runSecs(){
   if (!view || !view.started_ms) return 0;
-  return ((view.finished_ms || Date.now()) - view.started_ms) / 1000;
+  return ((view.finished_ms || clockNow()) - view.started_ms) / 1000;
+}
+const MODEL_BY_VI = { user: "bạn chọn", agent: "agent cha chọn", default: "mặc định của CLI" };
+function modelBy(n){
+  if (n.model_by === "agent") return `agent ${n.deps && n.deps[0] ? "“" + n.deps[0] + "”" : "cha"} chọn`;
+  return MODEL_BY_VI[n.model_by] || "";
 }
 function fmtTok(n){ return n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n || 0); }
 function kind(l){
@@ -549,18 +607,70 @@ async function start(){
 async function refreshRuns(){
   try { runs = await api("/api/runs"); } catch (_) { return; }
   const s = $("runSel");
-  s.replaceChildren(...(runs.length ? runs.map(r => {
-    const st = !r.finished ? "●" : r.ok ? "✓" : "✕";
-    return h("option", { value: r.id, text: `${st} ${r.goal || r.id}` });
-  }) : [h("option", { disabled: true, text: "chưa có lượt chạy" })]));
+  const opt = r => h("option", { value: r.id, text: `${runMark(r)} ${r.goal || r.id}` });
+  const now = runs.filter(r => !r.past), past = runs.filter(r => r.past);
+  const groups = [];
+  if (now.length) groups.push(h("optgroup", { label: "Phiên này" }, ...now.map(opt)));
+  // Không giới hạn ô chọn thì hàng trăm lượt cũ làm nó dài vô tận — xem hết ở hộp Lịch sử.
+  if (past.length) groups.push(h("optgroup", { label: `Lịch sử (${past.length})` }, ...past.slice(0, 30).map(opt)));
+  s.replaceChildren(...(groups.length ? groups : [h("option", { disabled: true, text: "chưa có lượt chạy" })]));
+  if (runId && !runs.some(r => r.id === runId)) s.append(h("option", { value: runId, text: runId }));
   if (runId) s.value = runId;
-  if (!runId && runs.length) selectRun(runs[0].id);
+  if (!runId && runs.length) selectRun((now[0] || runs[0]).id);
+  // Lượt dở dang có thể đang chạy ở tiến trình khác: nạp lại ảnh chụp định kỳ.
+  // Chỉ nạp lại khi số liệu server báo đã đổi — lượt đã chết thì không tốn gì.
+  const cur = runInfo(runId);
+  if (cur && cur.past && view && runSig(cur) !== viewSig) reloadView(runId);
+  if ($("histDlg").open) renderHistory();
   schedule();
+}
+/** Chữ ký số liệu của lượt chạy lúc nạp ảnh chụp đang hiển thị. */
+let viewSig = "";
+function runSig(r){ return r ? JSON.stringify([r.finished, r.nodes, r.done, r.failed, r.running, r.total_cost]) : ""; }
+async function reloadView(id){
+  viewSig = runSig(runInfo(id));
+  let v; try { v = await api(`/api/runs/${encodeURIComponent(id)}/view`); } catch (_) { return; }
+  if (runId !== id) return;
+  view = v; view.feed = view.feed || [];
+  if (sel && !view.nodes[sel]) sel = null;
+  if (!sel && view.order.length) sel = pickDefault();
+  schedule();
+}
+function runMark(r){ return isStale(r) ? "◌" : !r.finished ? "●" : r.ok ? "✓" : "✕"; }
+function runClass(r){ return isStale(r) ? "stale" : !r.finished ? "live" : r.ok ? "ok" : "bad"; }
+function fmtWhen(ms){
+  if (!ms) return "—";
+  const d = new Date(ms), today = new Date();
+  const hm = d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === today.toDateString() ? `hôm nay ${hm}` : `${d.toLocaleDateString("vi-VN")} ${hm}`;
+}
+function renderHistory(){
+  const q = $("histQ").value.trim().toLowerCase(), f = $("histF").value;
+  const list = runs.filter(r => (!f || runClass(r) === f) &&
+    (!q || `${r.goal} ${r.root} ${r.id}`.toLowerCase().includes(q)));
+  $("histCount").textContent = `${list.length} / ${runs.length} lượt chạy · nạp từ .agentloom/runs của các thư mục đã dùng`;
+  $("histList").replaceChildren(...(list.length ? list.map(r => {
+    const secs = r.started_ms ? ((r.finished_ms || (isStale(r) ? r.started_ms : Date.now())) - r.started_ms) / 1000 : 0;
+    const meta = [
+      h("span", { class: "tag" + (r.past ? "" : " now"), text: r.past ? "lịch sử" : "phiên này" }),
+      h("span", { text: `${r.nodes} agent · ${r.done} xong${r.failed ? ` · ${r.failed} hỏng` : ""}${r.running && !isStale(r) ? ` · ${r.running} đang chạy` : ""}` }),
+      r.finished || !isStale(r) ? h("span", { text: fmtDur(secs) }) : h("span", { text: "dở dang" }),
+      h("span", { text: "$" + (r.total_cost || 0).toFixed(2) }),
+      h("span", { class: "dir", text: r.root, title: r.root }),
+    ];
+    return h("li", { class: r.id === runId ? "cur" : "" },
+      h("button", { type: "button", onclick: () => { $("histDlg").close(); selectRun(r.id); } },
+        h("span", { class: "ic " + runClass(r), text: runMark(r), "aria-hidden": "true" }),
+        h("span", { class: "g", text: r.goal || r.id, title: r.goal || r.id }),
+        h("span", { class: "when", text: fmtWhen(r.started_ms), title: r.id }),
+        h("span", { class: "meta" }, ...meta)));
+  }) : [h("li", { class: "muted", text: runs.length ? "Không có lượt nào khớp." : "Chưa có lượt chạy nào." })]));
 }
 
 async function selectRun(id){
   if (es) { es.close(); es = null; }
   runId = id; sel = null; stickLog = true; userMoved = false; lastBox = null;
+  viewSig = runSig(runInfo(id));
   $("runSel").value = id;
   let v;
   try { v = await api(`/api/runs/${encodeURIComponent(id)}/view`); }
@@ -604,6 +714,12 @@ function mergePatch(p){
 }
 
 $("runSel").addEventListener("change", e => selectRun(e.target.value));
+$("histBtn").addEventListener("click", async () => {
+  renderHistory(); $("histDlg").showModal(); $("histQ").focus();
+  await refreshRuns();
+});
+$("histQ").addEventListener("input", renderHistory);
+$("histF").addEventListener("change", renderHistory);
 $("newBtn").addEventListener("click", openNew);
 $("heroBtn").addEventListener("click", openNew);
 $("stopBtn").addEventListener("click", async () => {
@@ -743,7 +859,7 @@ function renderGraph(){
   for (const id of view.order) {
     const n = view.nodes[id]; if (!n) continue;
     const p = pos[id], t = nodeSecs(n), act = activity(n);
-    const r2 = [h("span", { class: "pill", text: n.model || "mặc định", title: "model" })];
+    const r2 = [h("span", { class: "pill" + (n.model_by === "agent" ? " by-agent" : ""), text: n.model || "mặc định", title: `model — ${modelBy(n)}` })];
     if (t) r2.push(h("span", { text: fmtDur(t) }));
     if (n.cost > 0) r2.push(h("span", { text: "$" + n.cost.toFixed(2) }));
     const card = h("div", {
@@ -807,7 +923,7 @@ function renderDetail(){
   $("dId").textContent = n.id;
   const st = $("dState"); st.className = "st " + n.state; st.textContent = STATE_VI[n.state] || n.state;
   $("dTitle").textContent = `${n.agent}${n.title && n.title !== n.id ? " · " + n.title : ""}`;
-  $("dModel").textContent = n.model || "mặc định";
+  $("dModel").textContent = n.model ? `${n.model} · ${modelBy(n)}` : "mặc định của CLI";
   const t = nodeSecs(n); $("dTime").textContent = t ? fmtDur(t) : "—";
   $("dCost").textContent = n.cost > 0 ? "$" + n.cost.toFixed(4) : "—";
   $("dTok").textContent = n.tokens_in || n.tokens_out ? `${fmtTok(n.tokens_in)} / ${fmtTok(n.tokens_out)}` : "—";
@@ -838,8 +954,10 @@ function renderTop(){
   $("kCost").textContent = "$" + (view.total_cost || 0).toFixed(2);
   $("kTime").textContent = fmtDur(runSecs());
   const chip = $("runChip");
-  chip.className = "chip " + (!view.finished ? "live" : view.ok ? "ok" : "bad");
-  chip.lastElementChild.textContent = !view.finished ? "đang chạy" : view.ok ? "xong" : "có lỗi";
+  const stale = isStale(runInfo(runId));
+  chip.className = "chip " + (stale ? "" : !view.finished ? "live" : view.ok ? "ok" : "bad");
+  chip.lastElementChild.textContent = stale ? "dở dang" : !view.finished ? "đang chạy" : view.ok ? "xong" : "có lỗi";
+  chip.title = stale ? "Lượt chạy từ lịch sử chưa ghi nhận kết thúc — tiến trình chạy nó đã dừng, hoặc đang chạy ở phiên agentloom khác." : "";
   $("goal").textContent = view.goal || ""; $("goal").title = view.goal || "";
   const ri = runs.find(x => x.id === runId);
   $("stopBtn").hidden = !(ri && ri.can_cancel && !view.finished);

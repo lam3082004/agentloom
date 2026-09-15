@@ -170,6 +170,17 @@ graph tự mọc lúc chạy.
   qua code review + test log giả — không chạy agent thật để tiết kiệm ngân
   sách phiên, xem báo cáo QA cuối buổi).
 
+## Quyết định 2026-09-16
+
+- **Model**: agent chính do người dùng chọn (dashboard/plan); agent con do agent
+  cha tự chọn qua trường `model` của spawn — không kế thừa. `NodeView.model_by`
+  (`user`/`agent`/`default`) ghi rõ nguồn gốc, dashboard hiển thị.
+- **Lịch sử web**: `GET /api/runs` quét `.agentloom/runs/*` của thư mục mặc định
+  và các thư mục đã có lượt chạy; lượt cũ là handle chỉ-xem (`past: true`), lượt
+  dở dang được fold lại khi event log dài thêm.
+- **Windows**: bỏ khỏi mục tiêu. Giữ nhánh code `cfg(windows)` sẵn có nhưng không
+  build/kiểm tra nữa.
+
 ## Chạy lại kiểm chứng
 
 ```bash

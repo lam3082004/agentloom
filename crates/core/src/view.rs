@@ -31,6 +31,10 @@ pub struct NodeView {
     pub elapsed_s: u64,
     pub lines: Vec<String>,
     pub model: Option<String>,
+    /// Ai quyết định model: `user` (plan / dashboard), `agent` (agent cha chọn
+    /// khi spawn — là `deps[0]`), `default` (không ai chọn, CLI tự dùng mặc định).
+    /// Node con không kế thừa model của cha, nên cần nói rõ nguồn gốc.
+    pub model_by: String,
     /// Thư mục agent đang làm việc (worktree riêng hoặc gốc repo).
     pub workspace: Option<String>,
     /// Việc gần nhất agent làm — một câu nói hoặc một lần gọi tool. Đây là
@@ -138,6 +142,7 @@ impl View {
                     cost: n.cost,
                     elapsed_s: n.elapsed_s,
                     model: n.model.clone(),
+                    model_by: n.model_by.clone(),
                     workspace: n.workspace.clone(),
                     last: n.last.clone(),
                     summary: n.summary.clone(),
@@ -190,6 +195,12 @@ impl View {
                         elapsed_s: 0,
                         lines: Vec::new(),
                         model: model.clone(),
+                        model_by: match (model, by) {
+                            (None, _) => "default",
+                            (Some(_), Origin::Plan) => "user",
+                            (Some(_), Origin::Agent) => "agent",
+                        }
+                        .into(),
                         workspace: None,
                         last: String::new(),
                         tokens_in: 0,
@@ -360,6 +371,7 @@ pub struct NodeMeta {
     pub cost: f64,
     pub elapsed_s: u64,
     pub model: Option<String>,
+    pub model_by: String,
     pub workspace: Option<String>,
     pub last: String,
     pub summary: String,
@@ -582,6 +594,34 @@ mod tests {
         let m = v.meta();
         assert_eq!(m.finished_ms.unwrap() - m.started_ms.unwrap(), 90_000);
         assert!(m.ok);
+    }
+
+    #[test]
+    fn model_by_noi_ro_ai_chon_model() {
+        let mut v = View::default();
+        for (i, (id, by, model)) in [
+            ("chinh", Origin::Plan, Some("opus")),
+            ("con", Origin::Agent, Some("sonnet")),
+            ("tron", Origin::Agent, None),
+            ("plan-trong", Origin::Plan, None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            v.apply(&ev(
+                i as u64,
+                Some(id),
+                EventKind::NodeAdded {
+                    title: id.into(),
+                    agent: "claude".into(),
+                    deps: vec![],
+                    by,
+                    model: model.map(Into::into),
+                },
+            ));
+        }
+        let by: Vec<_> = v.meta().nodes.iter().map(|n| n.model_by.clone()).collect();
+        assert_eq!(by, ["user", "agent", "default", "default"]);
     }
 
     #[test]

@@ -50,9 +50,12 @@ fn protocol_block(store: &HarnessStore) -> String {
          Luôn kèm `verify`: lệnh shell thoát 0 khi và chỉ khi việc của node con\n\
          thật sự xong (ví dụ `python3 check.py`, `cargo test -q`). Không có nó thì\n\
          hệ điều phối chỉ còn tin lời node con.\n\
-         `model` chọn model cho node con (ví dụ `sonnet`, `opus`). Nếu việc được\n\
-         giao có chỉ định model cho node con thì PHẢI truyền; bỏ trống thì node con\n\
-         chạy model mặc định của agent.\n\
+         `model`: BẠN quyết định model cho từng node con. Node con KHÔNG kế thừa\n\
+         model của bạn — bỏ trống thì nó chạy model mặc định của CLI agent. Nếu\n\
+         việc được giao đã chỉ định model cho node con thì PHẢI dùng đúng model\n\
+         đó; không thì tự chọn theo độ khó: việc đơn giản, lặp lại → model nhẹ\n\
+         (claude: `sonnet`), việc khó, cần thiết kế hay suy luận dài → model mạnh\n\
+         (claude: `opus`). Với codex, chỉ ghi model khi biết chắc tên model hợp lệ.\n\
          \n\
          QUAN TRỌNG: khi được yêu cầu ghi lại một quy trình để tái sử dụng, PHẢI\n\
          dùng `write_skill` ở trên. ĐỪNG dùng cơ chế skill/memory riêng của bạn\n\
@@ -773,6 +776,10 @@ mod tests {
         assert!(
             p.contains("\"model\""),
             "phải dạy agent chọn model cho node con"
+        );
+        assert!(
+            p.contains("KHÔNG kế thừa"),
+            "phải nói rõ node con không kế thừa model — agent cha tự quyết"
         );
         assert!(
             p.contains(".agentloom/mutations.jsonl"),

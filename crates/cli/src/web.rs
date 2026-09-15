@@ -66,6 +66,12 @@ pub struct RunHandle {
     /// `None` ở chế độ xem lại: không còn gì phát thêm.
     patches: Option<broadcast::Sender<Patch>>,
     canceller: Option<watch::Sender<bool>>,
+    /// Lượt chạy nạp từ đĩa lúc liệt kê lịch sử — không do phiên server này chạy.
+    past: bool,
+    /// Kích thước event log lần fold gần nhất (chỉ dùng cho lượt `past`): lượt
+    /// cũ chưa xong (tiến trình khác đang chạy, hoặc đã chết giữa chừng) được
+    /// fold lại khi file đổi, file không đổi thì khỏi đọc.
+    disk_len: std::sync::atomic::AtomicU64,
 }
 
 impl RunHandle {
@@ -110,6 +116,8 @@ impl RunHandle {
             view,
             patches: Some(tx),
             canceller,
+            past: false,
+            disk_len: Default::default(),
         }
     }
 
@@ -122,7 +130,48 @@ impl RunHandle {
             view: Arc::new(RwLock::new(view)),
             patches: None,
             canceller: None,
+            past: false,
+            disk_len: Default::default(),
         }
+    }
+
+    /// Dựng lại lượt chạy cũ từ `<root>/.agentloom/runs/<id>/events.jsonl`.
+    fn from_disk(id: String, root: PathBuf, events: PathBuf) -> Option<Self> {
+        let len = std::fs::metadata(&events).ok()?.len();
+        let evs = EventLog::replay(&events).ok()?;
+        let mut view = View::default();
+        for e in &evs {
+            view.apply(e);
+        }
+        let mut h = Self::replay(id, root, events, view);
+        h.past = true;
+        *h.disk_len.get_mut() = len;
+        Some(h)
+    }
+
+    /// Fold lại lượt cũ chưa xong nếu event log đã dài thêm.
+    fn reload_if_grown(&self) {
+        use std::sync::atomic::Ordering;
+        if !self.past || self.snapshot().finished {
+            return;
+        }
+        let Ok(len) = std::fs::metadata(&self.events).map(|m| m.len()) else {
+            return;
+        };
+        if len == self.disk_len.load(Ordering::Relaxed) {
+            return;
+        }
+        let Ok(evs) = EventLog::replay(&self.events) else {
+            return;
+        };
+        let mut view = View::default();
+        for e in &evs {
+            view.apply(e);
+        }
+        if let Ok(mut g) = self.view.write() {
+            *g = view;
+        }
+        self.disk_len.store(len, Ordering::Relaxed);
     }
 
     fn snapshot(&self) -> View {
@@ -169,6 +218,54 @@ impl App {
     pub fn add_run(&self, h: RunHandle) {
         if let Ok(mut r) = self.inner.runs.write() {
             r.push(Arc::new(h));
+        }
+    }
+
+    /// Nạp lịch sử: mọi `.agentloom/runs/*/events.jsonl` dưới thư mục mặc định
+    /// và dưới các thư mục đã có lượt chạy. Lượt đã biết thì không đọc lại
+    /// (trừ lượt cũ chưa xong mà log dài thêm) — gọi mỗi lần liệt kê vẫn rẻ.
+    /// Đọc file đồng bộ: gọi trong `spawn_blocking`.
+    pub fn load_history(&self) {
+        let known = self
+            .inner
+            .runs
+            .read()
+            .map(|r| r.clone())
+            .unwrap_or_default();
+        let mut roots = vec![self.inner.default_root.clone()];
+        for h in &known {
+            if !roots.contains(&h.root) {
+                roots.push(h.root.clone());
+            }
+            h.reload_if_grown();
+        }
+        let mut found = Vec::new();
+        for root in roots {
+            let Ok(dir) = std::fs::read_dir(root.join(".agentloom").join("runs")) else {
+                continue;
+            };
+            for entry in dir.flatten() {
+                let id = entry.file_name().to_string_lossy().into_owned();
+                if known.iter().any(|h| h.id == id) || found.iter().any(|h: &RunHandle| h.id == id)
+                {
+                    continue;
+                }
+                let events = entry.path().join("events.jsonl");
+                if let Some(h) = RunHandle::from_disk(id, root.clone(), events) {
+                    found.push(h);
+                }
+            }
+        }
+        if found.is_empty() {
+            return;
+        }
+        if let Ok(mut r) = self.inner.runs.write() {
+            for h in found {
+                // Kiểm tra lại dưới khoá ghi: có thể vừa có lượt live cùng id.
+                if !r.iter().any(|x| x.id == h.id) {
+                    r.push(Arc::new(h));
+                }
+            }
         }
     }
 
@@ -413,15 +510,20 @@ struct RunInfo {
     running: usize,
     done: usize,
     failed: usize,
+    nodes: usize,
+    started_ms: Option<i64>,
+    finished_ms: Option<i64>,
     can_cancel: bool,
+    /// Nạp từ lịch sử trên đĩa, không phải lượt chạy của phiên server này.
+    past: bool,
 }
 
 async fn api_list_runs(State(app): State<App>) -> Json<Vec<RunInfo>> {
+    let a = app.clone();
+    let _ = tokio::task::spawn_blocking(move || a.load_history()).await;
     let runs = app.inner.runs.read().map(|r| r.clone()).unwrap_or_default();
-    // Mới nhất trước — thứ tự người dùng muốn thấy trong ô chọn.
-    let out = runs
+    let mut out: Vec<RunInfo> = runs
         .iter()
-        .rev()
         .map(|h| {
             let v = h.snapshot();
             let (running, done, failed, _) = v.counts();
@@ -436,10 +538,21 @@ async fn api_list_runs(State(app): State<App>) -> Json<Vec<RunInfo>> {
                 running,
                 done,
                 failed,
+                nodes: v.order.len(),
+                started_ms: v.started_ms,
+                finished_ms: v.finished_ms,
                 can_cancel: h.canceller.is_some() && !v.finished,
+                past: h.past,
             }
         })
         .collect();
+    // Mới nhất trước. Id bắt đầu bằng thời điểm tạo (UTC) nên so id là đủ
+    // khi log hỏng thiếu `run_started`.
+    out.sort_by(|a, b| {
+        b.started_ms
+            .cmp(&a.started_ms)
+            .then_with(|| b.id.cmp(&a.id))
+    });
     Json(out)
 }
 
@@ -736,6 +849,89 @@ mod tests {
             .unwrap_or(0);
         let body = text.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
         (code, body)
+    }
+
+    /// Ghi một lượt chạy giả vào `<root>/.agentloom/runs/<id>/events.jsonl`.
+    fn ghi_luot_cu(root: &Path, id: &str, goal: &str, finish: bool) -> PathBuf {
+        let path = root.join(".agentloom/runs").join(id).join("events.jsonl");
+        let log = EventLog::create(&path).unwrap();
+        log.emit(
+            None,
+            EventKind::RunStarted {
+                goal: goal.into(),
+                run: RunId::generate(),
+            },
+        );
+        if finish {
+            log.emit(
+                None,
+                EventKind::RunFinished {
+                    ok: true,
+                    total_cost_usd: 0.5,
+                },
+            );
+        }
+        path
+    }
+
+    #[tokio::test]
+    async fn liet_ke_nap_ca_lich_su_tren_dia() {
+        let root = tmp_dir("hist");
+        ghi_luot_cu(&root, "20260101-000000-aaaaaa", "lượt cũ", true);
+        // Thư mục rác không có events.jsonl không được làm hỏng danh sách.
+        std::fs::create_dir_all(root.join(".agentloom/runs/rac")).unwrap();
+        let app = App::new(true, root.clone());
+        let token = app.token().to_string();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            axum::serve(listener, router(app)).await.unwrap();
+        });
+
+        let (code, body) = http(port, "GET", "/api/runs", "127.0.0.1", Some(&token), None).await;
+        assert_eq!(code, 200);
+        let list: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+        assert_eq!(list.len(), 1, "{body}");
+        assert_eq!(list[0]["goal"], "lượt cũ");
+        assert_eq!(list[0]["past"], true);
+        assert_eq!(list[0]["can_cancel"], false);
+        assert_eq!(list[0]["finished"], true);
+
+        // Lượt mới xuất hiện sau khi server đã chạy: lần liệt kê sau thấy ngay,
+        // và đứng trước lượt cũ.
+        std::thread::sleep(Duration::from_millis(5));
+        let moi = ghi_luot_cu(&root, "20260102-000000-bbbbbb", "lượt mới", false);
+        let (_, body) = http(port, "GET", "/api/runs", "127.0.0.1", Some(&token), None).await;
+        let list: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+        let goals: Vec<_> = list.iter().map(|r| r["goal"].as_str().unwrap()).collect();
+        assert_eq!(goals, ["lượt mới", "lượt cũ"]);
+        assert_eq!(list[0]["finished"], false);
+
+        // Lượt cũ chưa xong mà log dài thêm (tiến trình khác chạy) thì fold lại.
+        let log = EventLog::create(&moi).unwrap();
+        log.emit(
+            None,
+            EventKind::RunFinished {
+                ok: false,
+                total_cost_usd: 0.0,
+            },
+        );
+        let (_, body) = http(port, "GET", "/api/runs", "127.0.0.1", Some(&token), None).await;
+        let list: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+        assert_eq!(list[0]["finished"], true, "{body}");
+
+        // Xem được chi tiết lượt lịch sử.
+        let (code, _) = http(
+            port,
+            "GET",
+            "/api/runs/20260101-000000-aaaaaa/view",
+            "127.0.0.1",
+            Some(&token),
+            None,
+        )
+        .await;
+        assert_eq!(code, 200);
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[tokio::test]

@@ -27,6 +27,9 @@ Bấm **+ Chạy mới** ở góc trên, rồi trong hộp thoại:
    ngay nó có phải git repo đã có commit chưa.
 2. **Agent chính** — `claude` hoặc `codex`.
 3. **Model** — `sonnet` / `opus` / `fable` cho claude, hoặc tự nhập tên model.
+   Đây là model của **agent chính** — bạn chọn. Model của **agent con** do agent
+   chính tự quyết khi giao việc (không kế thừa tự động); muốn ép thì ghi thẳng vào
+   prompt, ví dụ "agent con dùng sonnet".
 4. **Prompt** — viết việc cần làm cho **một** agent chính.
 5. Bấm **Chạy**.
 
@@ -42,15 +45,24 @@ Agent chính có thể tự giao việc cho agent con. Dashboard chia làm bốn
 └────────────────────┴─────────────────────────────────────────────────┴───────────────────┘
 ```
 
-- **Thanh trên**: trạng thái lượt chạy, đồng hồ tổng, số agent theo trạng thái, chi phí, nút **Dừng**.
+- **Thanh trên**: trạng thái lượt chạy, đồng hồ tổng, số agent theo trạng thái, chi phí, nút **Dừng**,
+  nút **🕘 Lịch sử**.
+- **Lịch sử chạy**: server tự nạp mọi lượt cũ trong `.agentloom/runs/` của thư mục
+  mặc định và của các thư mục đã chạy, nên tắt server bật lại vẫn còn. Hộp
+  **Lịch sử** cho tìm theo mục tiêu/thư mục/id và lọc theo trạng thái; ô chọn lượt
+  chạy chia hai nhóm "Phiên này" và "Lịch sử". Lượt cũ chỉ để xem, không dừng được.
+  Lượt **dở dang** là lượt chưa ghi nhận kết thúc — tiến trình chạy nó đã chết, hoặc
+  nó đang chạy ở một `agentloom` khác (khi đó dashboard tự nạp lại mỗi khi log dài thêm).
 - **Agents**: mọi agent, người đang chạy xếp lên đầu, kèm việc đang làm.
 - **Graph**: mỗi agent một thẻ (badge `C` claude, `X` codex), mũi tên nối agent với
   agent nó phụ thuộc, `⚙` đánh dấu agent do agent khác tự tạo. Kéo để di chuyển,
   cuộn để zoom, nút `⤢` để vừa khung.
 - **Hoạt động trực tiếp**: mọi việc của mọi agent theo thời gian, mới nhất lên đầu;
   tích "chỉ agent đang chọn" để lọc.
-- **Chi tiết agent**: bấm một thẻ hoặc một dòng để xem model, thời gian, chi phí,
-  token, thư mục worktree (có nút chép) và log đầy đủ.
+- **Chi tiết agent**: bấm một thẻ hoặc một dòng để xem model **và ai chọn nó**
+  (`bạn chọn` / `agent “chinh” chọn` / `mặc định của CLI`), thời gian, chi phí,
+  token, thư mục worktree (có nút chép) và log đầy đủ. Trên thẻ, model do agent
+  chọn tô tím.
 
 > Đừng mở thẳng file `crates/cli/assets/index.html` — trang cần server phía
 > sau và sẽ báo "không nối được tới agentloom". Luôn mở link server in ra.
@@ -600,7 +612,7 @@ mà agent bị chặn quyền, không làm được gì, nhưng vẫn báo thàn
 | `grep -qx 'version = "2.0"' Cargo.toml` | `grep 2.0 Cargo.toml` | khớp chính xác, không khớp nhầm |
 | `test -s docs/plan.md` | `ls docs/` | kiểm file tồn tại **và** không rỗng |
 
-- Chạy trong worktree của node, bằng `sh -c` (Linux/macOS) hoặc `cmd /C` (Windows).
+- Chạy trong worktree của node, bằng `sh -c`.
 - Có cùng timeout với node (`--timeout-min`); treo quá hạn là hỏng.
 - Không có `verify` thì agentloom chỉ còn tin lời agent — và ghi rõ điều đó vào log.
 - **Đừng để chính agent viết `verify` cho việc của nó** mà không đọc lại — agent
@@ -729,7 +741,8 @@ trong worktree của nó:
 ```
 
 Node do agent spawn tự động phụ thuộc node đã spawn nó, cộng thêm các node trong
-`after`.
+`after`. `model` do agent cha quyết định; bỏ trống thì node con chạy model mặc định
+của CLI — **không** kế thừa model của cha.
 
 ---
 
@@ -796,9 +809,8 @@ kiểm tra header `Host` chặn trường hợp sau.
 
 ## 15. Giới hạn đã biết
 
-- **Windows mới được kiểm ở mức compile.** Code quản lý tiến trình có bản
-  Windows (`CREATE_NEW_PROCESS_GROUP`, `taskkill /T /F`, `cmd /C`) và build sạch
-  cho `x86_64-pc-windows-gnu`, nhưng chưa chạy thật trên máy Windows.
+- **Chỉ hỗ trợ Linux/macOS.** Windows không phải mục tiêu: trong code còn nhánh
+  Windows (`taskkill /T /F`, `cmd /C`) nhưng không được build hay kiểm tra.
 - **Chi phí codex là ước lượng** từ token.
 - **`verify` là tuỳ chọn** với node do agent spawn; protocol dạy agent luôn kèm
   nó, nhưng không bắt buộc.
@@ -808,6 +820,6 @@ kiểm tra header `Host` chặn trường hợp sau.
   lý.
 - **Không tự dọn** worktree, branch hay log — xem [mục 11](#11-dọn-dẹp).
 - **`--budget` không cắt node đang chạy**, chỉ ngừng nạp node mới.
-- **Web chỉ giữ các lượt chạy khởi động trong phiên server hiện tại.** Tắt
-  server là mất danh sách; lượt cũ vẫn xem được bằng `agentloom runs` /
-  `replay --web`.
+- **Lịch sử web chỉ quét thư mục đã biết**: thư mục mặc định (`--root`) và các
+  thư mục đã chạy trong phiên server. Lượt ở thư mục khác xem bằng
+  `agentloom web --root DIR` hoặc `replay --web`.
