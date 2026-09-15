@@ -71,9 +71,14 @@ impl AgentAdapter for CodexAdapter {
         cmd.arg(&prompt)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            // Nhóm tiến trình riêng — cùng lý do như claude: codex có thể đẻ
+            // shell con, giết mỗi pid trực tiếp để mồ côi phần còn lại.
+            .process_group(0);
 
         let mut child = cmd.spawn()?;
+        // Lấy trước khi bị `wait`/`start_kill` làm mất.
+        let pid = child.id();
         let stdout = child.stdout.take().expect("stdout đã piped");
         let stderr = child.stderr.take().expect("stderr đã piped");
 
@@ -122,10 +127,12 @@ impl AgentAdapter for CodexAdapter {
             Ok::<_, anyhow::Error>(())
         };
 
-        match tokio::time::timeout(req.timeout, parse).await {
-            Ok(r) => r?,
-            Err(_) => {
+        let mut cancel_rx = req.cancel.clone();
+        tokio::select! {
+            r = parse => r?,
+            _ = tokio::time::sleep(req.timeout) => {
                 let _ = child.start_kill();
+                if let Some(pid) = pid { super::kill_process_group(pid).await; }
                 log.emit(
                     Some(req.node.clone()),
                     EventKind::Note {
@@ -134,6 +141,19 @@ impl AgentAdapter for CodexAdapter {
                 );
                 out.ok = false;
                 out.summary = "timeout".into();
+                return Ok(out);
+            }
+            _ = super::wait_for_cancel(&mut cancel_rx) => {
+                let _ = child.start_kill();
+                if let Some(pid) = pid { super::kill_process_group(pid).await; }
+                log.emit(
+                    Some(req.node.clone()),
+                    EventKind::Note {
+                        text: "bị huỷ — đã giết tiến trình codex".into(),
+                    },
+                );
+                out.ok = false;
+                out.summary = "huỷ theo yêu cầu người dùng".into();
                 return Ok(out);
             }
         }
@@ -295,6 +315,7 @@ mod tests {
             model: None,
             permission_mode: "acceptEdits".into(),
             timeout: std::time::Duration::from_secs(1),
+            cancel: tokio::sync::watch::channel(false).1,
         }
     }
     fn log() -> (EventLog, std::path::PathBuf) {

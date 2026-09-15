@@ -36,10 +36,25 @@ graph tự mọc lúc chạy.
       `write_skill` ghi vào `.agentgraph/skills/` rồi được nạp lại ở lần sau.
       Tổng $0.39. Hai bug nặng lộ ra ở đây, xem mục dưới.
 
-- [ ] **Mốc 3b — resume.** Hiện `session` đã lưu nhưng chưa có đường để node
-      sau nói chuyện lại với agent cũ. Cần lệnh `ask <node> <câu hỏi>`.
-- [ ] **Mốc 4 — web UI.** Core đã UI-agnostic; thêm axum + SSE đọc cùng event log.
+- [x] **Mốc 3b — resume.** Lệnh `agentgraph ask <events> <node> "<câu hỏi>"`
+      đọc log tìm agent/session/worktree, resume qua đúng `AgentAdapter`
+      (`--resume` cho claude, `codex exec resume` cho codex — xác nhận bằng
+      `--help` thật, không đoán). `EventKind::NodeFinished` giờ mang `session`
+      (`#[serde(default)]`, log cũ vẫn replay được).
+- [x] **Mốc 4 — web UI.** Core đã UI-agnostic; axum + SSE đọc cùng event log.
 - [ ] **Mốc 5 — grind/budget theo node.** Hiện chỉ có trần toàn cục + timeout.
+- [x] **Mốc 6 — merge đụng độ báo cho agent.** Trước đây chỉ `git merge
+      --abort` rồi ghi Note — agent không đọc event log nên chạy tiếp trên
+      cây thiếu việc của dep mà không biết. Giờ tên branch đụng độ đi vào
+      `protocol` (kênh operator), cùng chỗ với hướng dẫn mutation.
+- [x] **Mốc 7 — huỷ giữa chừng không mồ côi tiến trình.** `q`/Esc/Ctrl-C
+      (TUI) và Ctrl-C (`--plain`/`--web`) đẩy tín hiệu qua
+      `tokio::sync::watch` tới mọi adapter đang chạy; adapter giết cả process
+      group (`process_group(0)`, giống cách `run.rs` đã làm cho verifier).
+      Test bằng tiến trình `sleep` thật, kiểm PID biến mất sau khi huỷ.
+- [x] **Mốc 8 — `agentgraph runs`.** Liệt kê `.agentgraph/runs/*/events.jsonl`,
+      mới nhất trước, dùng lại `core::view::View` để fold — không viết logic
+      đếm thứ hai. Log hỏng/dở dang không làm lệnh chết.
 
 ## Hai bug nặng lộ ra khi thử với agent thật
 
@@ -69,15 +84,31 @@ graph tự mọc lúc chạy.
   bỏ mọi kiểm tra quyền. Chỉ dùng trong worktree dùng một lần.
 - Chi phí codex là **ước lượng** từ token (codex không trả USD). Không được
   trộn lẫn với số thật của claude khi báo cáo.
-- Merge SẠCH đã thử và chạy được. Merge ĐỤNG ĐỘ thì chưa — mới chỉ có đường
-  code abort rồi báo cho agent, chưa có lần chạy thật nào chứng minh.
+- Merge SẠCH đã thử và chạy được thật. Merge ĐỤNG ĐỘ giờ báo cho agent qua
+  `protocol` (test tự động, hai node fake ghi cùng file khác nội dung) —
+  nhưng agent vẫn phải TỰ xử lý đụng độ, orchestrator không tự merge tay.
 - Node do agent spawn có `verify` nhưng là TUỲ CHỌN. Không kèm thì node vẫn
   chạy và log ghi "chỉ tin lời agent". Agent thật (claude sonnet) đã tự kèm
   verify khi được protocol dạy, nhưng không có gì bắt buộc nó.
 - Chế độ `shared`: các node chạy ĐỒNG THỜI dùng chung một file mutation, nên
   node spawn được gán cho node nào đọc file trước. Mỗi dòng chỉ áp một lần,
   nhưng quan hệ cha–con có thể sai. Muốn đúng thì dùng `worktree` (mặc định).
-- Chưa có cách huỷ giữa chừng ngoài `q` (tiến trình con có thể còn sống).
+- Huỷ giữa chừng giờ giết cả process group của agent (test bằng `sleep`
+  thật). Chưa test được việc bấm Ctrl-C thật trên terminal `--plain`/`--web`
+  từ một test tự động (gửi SIGINT rồi quan sát toàn bộ luồng CLI là việc khó
+  làm tất định trong CI) — chỉ xác nhận bằng đọc code + test ở tầng Runner.
+- `agentgraph ask`: đã xác nhận cờ CLI thật (`claude --help`,
+  `codex exec resume --help`) và test lỗi/log ở tầng CLI bằng log viết tay.
+  Resume thật với claude (`--model sonnet`), ghi một "số bí mật" ở lượt chạy
+  gốc rồi hỏi lại ở worktree cũ — trả lời đúng số, xác nhận resume thật sự
+  giữ ngữ cảnh. Tổng chi phí phiên xác nhận (2 lượt run + resume) ~$0.17,
+  trong trần $0.30.
+- Bug thật bắt được ngay ở lần chạy `ask` thật đầu tiên: request không ai giữ
+  `Sender` huỷ (kênh dùng một lần) khiến `cancel_rx.changed()` trả `Err` NGAY
+  LẬP TỨC (sender rớt) — `select!` cũ coi bất kỳ lần `changed()` hoàn thành
+  nào (kể cả lỗi) là "đã huỷ", nên agent bị giết trước khi kịp chạy. Sửa bằng
+  `agent::wait_for_cancel` (treo vĩnh viễn khi sender rớt thay vì báo huỷ),
+  có test hồi quy `khong_ai_giu_sender_thi_khong_duoc_coi_la_da_huy`.
 
 ## Chạy lại kiểm chứng
 

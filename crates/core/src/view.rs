@@ -36,6 +36,11 @@ pub struct View {
     pub nodes: HashMap<String, NodeView>,
     pub notes: Vec<String>,
     pub finished: bool,
+    /// `ok` của `RunFinished` — chỉ có nghĩa khi `finished` là `true`. Lệnh
+    /// `runs` cần cái này để phân biệt OK/CÓ LỖI mà không phải tự suy luận
+    /// lại từ số node hỏng (View đã fold đúng một lần, dùng lại thay vì đếm
+    /// lần hai).
+    pub ok: bool,
     pub total_cost: f64,
     pub mutations_rejected: usize,
 }
@@ -170,9 +175,10 @@ impl View {
                 };
                 self.push(node, msg);
             }
-            EventKind::RunFinished { total_cost_usd, .. } => {
+            EventKind::RunFinished { total_cost_usd, ok } => {
                 self.finished = true;
                 self.total_cost = *total_cost_usd;
+                self.ok = *ok;
             }
             EventKind::Note { text } => {
                 self.notes.push(text.clone());

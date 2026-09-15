@@ -24,7 +24,7 @@ crates/cli/             binary `agentgraph`
   tui.rs                  ratatui: cây graph | log node | thanh chi phí
   web.rs                  axum + SSE, đẩy Patch đã fold sẵn
   assets/index.html       trang web, không thư viện ngoài
-  main.rs                 run · replay · doctor
+  main.rs                 run · replay · doctor · ask · runs
 ```
 
 ## Chạy
@@ -45,6 +45,12 @@ agentgraph replay .agentgraph/runs/<id>/events.jsonl
 # giao diện web thay vì TUI
 agentgraph run plan.toml --web --port 7878
 agentgraph replay .agentgraph/runs/<id>/events.jsonl --web
+
+# liệt kê các lượt chạy, mới nhất trước
+agentgraph runs
+
+# hỏi lại agent của một node cũ — resume đúng session, đúng worktree
+agentgraph ask .agentgraph/runs/<id>/events.jsonl <node-id> "câu hỏi"
 ```
 
 ```toml
@@ -105,6 +111,15 @@ cùng một thứ tiếng.
 - Chi phí codex là **ước lượng** từ token; codex không trả USD như claude.
 - `bypassPermissions` là cần thiết để chạy không giám sát, và nó bỏ mọi kiểm
   tra quyền. Chỉ dùng với worktree dùng một lần.
-- `session` đã lưu nhưng chưa có lệnh hỏi lại agent cũ.
-- Merge sạch ở node join đã chạy thật. Merge đụng độ thì chưa thử lần nào.
-- Huỷ giữa chừng chưa chắc giết hết tiến trình con.
+- Merge đụng độ giờ được báo cho agent qua `protocol` (kênh operator) thay vì
+  chỉ nằm im trong Note của event log — nhưng agent vẫn phải TỰ xử lý đụng độ
+  (đọc branch, merge tay); orchestrator không tự động giải quyết.
+- Huỷ giữa chừng (q trong TUI, Ctrl-C) giết cả process group của tiến trình
+  agent, không chỉ pid trực tiếp — đã test bằng tiến trình `sleep` thật. Vẫn
+  có khoảng trễ vài trăm ms giữa lúc gửi tín hiệu và lúc `kill -KILL` có hiệu
+  lực; không có gì đảm bảo tuyệt đối cho tiến trình chết ngay lập tức trước
+  khi kịp đẻ thêm con.
+- `agentgraph ask` resume agent cũ đúng session/worktree đã lưu, nhưng chưa
+  kiểm được bằng agent thật là claude/codex thật sự hiểu ngữ cảnh cũ tốt tới
+  đâu — chỉ xác nhận cờ CLI đúng và luồng orchestrator chạy được.
+- `agentgraph runs` chỉ đọc log trên đĩa hiện có; không dọn hay nén log cũ.

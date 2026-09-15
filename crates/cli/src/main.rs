@@ -1,7 +1,7 @@
 mod tui;
 mod web;
 
-use agentgraph_core::agent::{adapter_for, known_agents};
+use agentgraph_core::agent::{AgentRequest, adapter_for, known_agents};
 use agentgraph_core::config::{Limits, Plan};
 use agentgraph_core::event::EventLog;
 use agentgraph_core::graph::{Isolate, NodeSpec};
@@ -71,6 +71,25 @@ enum Cmd {
         #[arg(long, default_value_t = 7878)]
         port: u16,
     },
+    /// Hỏi lại agent của một node cũ — resume đúng session trong worktree cũ
+    /// của nó, không chạy lại từ đầu.
+    Ask {
+        /// Event log của lượt chạy chứa node cần hỏi.
+        events: PathBuf,
+        /// Id node muốn resume.
+        node: String,
+        /// Câu hỏi gửi cho agent.
+        question: String,
+        /// In event JSONL của lượt resume thay vì chỉ câu trả lời cuối.
+        #[arg(long)]
+        plain: bool,
+    },
+    /// Liệt kê các lượt chạy trong `.agentgraph/runs/`, mới nhất trước.
+    Runs {
+        /// Thư mục gốc chứa `.agentgraph/runs/` — mặc định thư mục hiện tại.
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -83,6 +102,13 @@ async fn main() -> anyhow::Result<()> {
             web,
             port,
         } => replay(events, plain, web, port).await,
+        Cmd::Ask {
+            events,
+            node,
+            question,
+            plain,
+        } => ask(events, node, question, plain).await,
+        Cmd::Runs { root } => runs(root).await,
         Cmd::Run {
             plan,
             goal,
@@ -159,10 +185,31 @@ async fn run(
     let mut rx = log.subscribe();
 
     let runner = Runner::new(&root, limits, log.clone(), run_id).await?;
+    let canceller = runner.canceller();
     // Mặt web phải đăng ký *trước* khi runner chạy: nó dựng trạng thái bằng
     // cách fold event, nên bỏ lỡ run_started/node_added là mất sạch graph.
     let web_state = web.then(|| web::WebState::live(log.clone()));
     let mut handle = tokio::spawn(async move { runner.execute(plan).await });
+
+    // Ctrl-C ở `--plain`/`--web` không còn tự giết được tiến trình agent con:
+    // adapter giờ spawn vào process group RIÊNG (để giết được cả tiến trình
+    // cháu), nên terminal không còn tự chuyển SIGINT tới chúng như trước.
+    // TUI xử lý Ctrl-C như một phím (raw mode chặn SIGINT thật), nhưng vẫn
+    // bắt ở đây phòng khi không phải terminal tương tác.
+    {
+        let c = canceller.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                eprintln!("\nđang huỷ — giết tiến trình agent...");
+                let _ = c.send(true);
+                // Cho agent con vài giây để bị giết trước khi buộc thoát —
+                // mặt web phục vụ vô thời hạn sau khi graph xong nên không
+                // có gì khác tự làm tiến trình kết thúc.
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                std::process::exit(130);
+            }
+        });
+    }
 
     if let Some(state) = web_state {
         // Web chạy tới khi người dùng Ctrl-C: graph xong rồi vẫn xem lại được.
@@ -226,6 +273,9 @@ async fn run(
             }
             term.draw(|f| ui.draw(f))?;
             if !ui.handle_input(Duration::from_millis(80))? {
+                // q/Esc/Ctrl-C: huỷ agent đang chạy trước khi thoát vòng vẽ.
+                // Vô hại nếu graph đã xong — không còn gì để giết.
+                let _ = canceller.send(true);
                 break;
             }
             if ui.view.finished && handle.is_finished() {
@@ -292,6 +342,167 @@ async fn replay(events: PathBuf, plain: bool, web: bool, port: u16) -> anyhow::R
         }
     }
     ratatui::restore();
+    Ok(())
+}
+
+/// Hỏi lại agent của một node cũ: đọc log để tìm agent + session + worktree
+/// của nó, rồi resume đúng phiên đó — không chạy lại từ đầu, không tạo
+/// worktree mới. Dùng lại `AgentAdapter` y hệt lúc chạy thật, chỉ khác
+/// `protocol` rỗng: đây là câu hỏi của người, không phải chỉ dẫn harness.
+async fn ask(events: PathBuf, node: String, question: String, plain: bool) -> anyhow::Result<()> {
+    let evs = EventLog::replay(&events)
+        .with_context(|| format!("không đọc được event log {}", events.display()))?;
+    let node_id =
+        NodeId::new(&node).map_err(|e| anyhow::anyhow!("node id '{node}' không hợp lệ: {e}"))?;
+
+    let mut agent = None;
+    let mut cwd = None;
+    let mut session = None;
+    let mut found = false;
+    for e in &evs {
+        if e.node.as_ref() != Some(&node_id) {
+            continue;
+        }
+        found = true;
+        match &e.kind {
+            agentgraph_core::event::EventKind::NodeAdded { agent: a, .. } => {
+                agent = Some(a.clone());
+            }
+            // Node có thể được resume nhiều lần với worktree khác nhau chỉ
+            // khi bị spawn lại — trong một lượt chạy, dòng cuối là đúng.
+            agentgraph_core::event::EventKind::Workspace { path, .. } => {
+                cwd = Some(PathBuf::from(path));
+            }
+            agentgraph_core::event::EventKind::NodeFinished { session: s, .. } if s.is_some() => {
+                session = s.clone();
+            }
+            _ => {}
+        }
+    }
+
+    if !found {
+        anyhow::bail!("node '{node}' không tồn tại trong {}", events.display());
+    }
+    let agent =
+        agent.ok_or_else(|| anyhow::anyhow!("node '{node}' không có bản ghi agent trong log"))?;
+    let session = session.ok_or_else(|| {
+        anyhow::anyhow!(
+            "node '{node}' không có session — chưa chạy xong lần nào nên không resume được"
+        )
+    })?;
+    let cwd = cwd.ok_or_else(|| anyhow::anyhow!("node '{node}' không có workspace trong log"))?;
+    if !cwd.exists() {
+        anyhow::bail!("worktree của node '{node}' đã bị xoá: {}", cwd.display());
+    }
+    let Some(adapter) = adapter_for(&agent) else {
+        anyhow::bail!("agent '{agent}' không có adapter");
+    };
+
+    // Log riêng cho lượt hỏi lại, cạnh log gốc — không trộn vào events.jsonl
+    // của lượt chạy cũ, nhưng vẫn theo đúng nguyên tắc "sự thật nằm ở log".
+    let ask_dir = events
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let ask_path = ask_dir.join(format!(
+        "ask-{node}-{}.jsonl",
+        agentgraph_core::ids::RunId::generate()
+    ));
+    let log = EventLog::create(&ask_path)?;
+    let mut rx = log.subscribe();
+
+    let req = AgentRequest {
+        node: node_id,
+        task: question,
+        protocol: String::new(),
+        cwd,
+        session: Some(session),
+        model: None,
+        permission_mode: "acceptEdits".into(),
+        timeout: Duration::from_secs(30 * 60),
+        cancel: tokio::sync::watch::channel(false).1,
+    };
+
+    let out = adapter.run(req, &log).await?;
+    if plain {
+        // `emit` ghi đĩa rồi mới broadcast, và toàn bộ event đã phát ra
+        // trước khi `run` trả về — không cần chạy song song với adapter,
+        // channel đã có sẵn hết để đọc lại.
+        while let Ok(ev) = rx.try_recv() {
+            if writeln!(std::io::stdout(), "{}", serde_json::to_string(&ev)?).is_err() {
+                break;
+            }
+        }
+        println!();
+    }
+    println!("{}", out.summary);
+    Ok(())
+}
+
+/// Liệt kê `.agentgraph/runs/*/events.jsonl`, mới nhất trước. Dùng lại
+/// `View::apply` để fold — id run có tiền tố `%Y%m%d-%H%M%S` (xem
+/// `RunId::generate`) nên sắp xếp chuỗi cũng chính là sắp theo thời gian,
+/// không cần phân tích lại timestamp.
+async fn runs(root: PathBuf) -> anyhow::Result<()> {
+    let dir = root.join(".agentgraph").join("runs");
+    let mut ids: Vec<String> = match std::fs::read_dir(&dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect(),
+        Err(_) => {
+            println!("chưa có lượt chạy nào trong {}", dir.display());
+            return Ok(());
+        }
+    };
+    if ids.is_empty() {
+        println!("chưa có lượt chạy nào trong {}", dir.display());
+        return Ok(());
+    }
+    ids.sort();
+    ids.reverse();
+
+    for id in ids {
+        let events = dir.join(&id).join("events.jsonl");
+        // Log hỏng hoặc lượt chạy chưa xong (không có run_finished, ví dụ
+        // tiến trình bị kill -9) không được làm chết cả lệnh — hiện là dở
+        // dang chứ không phải lỗi của `runs`.
+        let evs = match agentgraph_core::event::EventLog::replay(&events) {
+            Ok(evs) => evs,
+            Err(_) => {
+                println!("{id:<24} (không đọc được log)");
+                continue;
+            }
+        };
+        let mut v = agentgraph_core::view::View::default();
+        for e in &evs {
+            v.apply(e);
+        }
+        // Đếm trên trạng thái node đã fold sẵn trong View — không đọc lại
+        // event thô lần hai, đúng nguyên tắc "một phép fold, ba mặt" áp dụng
+        // luôn cho mặt thứ tư này.
+        let (mut done, mut failed, mut skipped) = (0, 0, 0);
+        for n in v.nodes.values() {
+            match n.state.as_str() {
+                "done" => done += 1,
+                "failed" => failed += 1,
+                "skipped" => skipped += 1,
+                _ => {}
+            }
+        }
+        let trang_thai = if !v.finished {
+            "DỞ DANG"
+        } else if v.ok {
+            "OK"
+        } else {
+            "CÓ LỖI"
+        };
+        println!(
+            "{id:<24} {trang_thai:<8} {done} xong · {failed} hỏng · {skipped} bỏ qua · ${:.2} · {}",
+            v.total_cost, v.goal
+        );
+    }
     Ok(())
 }
 

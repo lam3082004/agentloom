@@ -66,6 +66,28 @@ fn protocol_block(store: &HarnessStore) -> String {
     s
 }
 
+/// Báo đụng độ merge cho agent qua kênh operator — cùng lý do `protocol_block`
+/// không đi qua task: đây là chỉ dẫn của hệ điều phối, không phải của người
+/// dùng, nhét vào task sẽ bị agent có ý thức bảo mật coi là prompt injection.
+///
+/// Không có dòng này thì agent chạy trên cây THIẾU việc của dep mà không biết
+/// — merge đụng độ trước đây chỉ ghi Note vào event log, nơi agent không đọc.
+fn conflict_block(branches: &[String]) -> String {
+    format!(
+        "\n\n---\n\
+         CẢNH BÁO TỪ HỆ ĐIỀU PHỐI: merge nhánh của (các) node phụ thuộc vào\n\
+         worktree này bị ĐỤNG ĐỘ và đã bị bỏ qua (git merge --abort). Cây bạn\n\
+         đang thấy CÓ THỂ THIẾU việc của những nhánh sau — tự kiểm tra bằng\n\
+         `git log`/`git diff` với branch tương ứng và merge/áp lại thủ công nếu\n\
+         cần thiết cho việc của bạn:\n{}\n",
+        branches
+            .iter()
+            .map(|b| format!("  - {b}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
 pub struct Runner {
     pub graph: Graph,
     log: EventLog,
@@ -79,6 +101,11 @@ pub struct Runner {
     /// mutation của node trước.
     cursors: HashMap<PathBuf, usize>,
     workspaces: HashMap<NodeId, PathBuf>,
+    /// Nguồn tín hiệu huỷ, nhân bản (`subscribe`) cho mỗi request gửi tới
+    /// adapter. Một `watch` chứ không phải `Notify`: node khởi động SAU khi
+    /// đã huỷ vẫn phải đọc được giá trị `true` ngay, không chỉ node đang chạy
+    /// lúc tín hiệu phát ra.
+    cancel_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl Runner {
@@ -100,6 +127,7 @@ impl Runner {
         };
         let worktrees = Worktrees::discover(&root, run.as_str()).await;
         let store = HarnessStore::new(worktrees.repo_root().join(".agentgraph"));
+        let (cancel_tx, _) = tokio::sync::watch::channel(false);
         Ok(Self {
             graph: Graph::new(limits.max_nodes),
             log,
@@ -109,11 +137,19 @@ impl Runner {
             run,
             cursors: HashMap::new(),
             workspaces: HashMap::new(),
+            cancel_tx,
         })
     }
 
     pub fn run_id(&self) -> &RunId {
         &self.run
+    }
+
+    /// Tay cầm để mã gọi từ ngoài (CLI) huỷ toàn bộ agent con đang chạy.
+    /// `Sender` là `Clone`, gọi `.send(true)` từ đâu cũng được — orchestrator
+    /// không cần biết TUI, `--plain` hay `--web` gọi nó theo cách nào.
+    pub fn canceller(&self) -> tokio::sync::watch::Sender<bool> {
+        self.cancel_tx.clone()
     }
 
     pub async fn execute(mut self, plan: Plan) -> anyhow::Result<RunSummary> {
@@ -207,11 +243,26 @@ impl Runner {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut budget_hit = false;
 
+        let mut cancel_noted = false;
+
         loop {
             self.graph.refresh_ready();
+            // Đọc một lần mỗi vòng: `cancel_tx` có thể đổi bất cứ lúc nào từ
+            // ngoài (CLI), nhưng vòng nạp node bên dưới chạy đồng bộ nên phải
+            // chốt giá trị trước khi quyết định có nạp thêm hay không.
+            let cancelled = *self.cancel_tx.borrow();
+            if cancelled && !cancel_noted {
+                cancel_noted = true;
+                self.log.emit(
+                    None,
+                    EventKind::Note {
+                        text: "bị huỷ — dừng nạp node mới, giết agent đang chạy".into(),
+                    },
+                );
+            }
 
             // Nạp node mới vào chỗ trống, trong giới hạn song song và ngân sách.
-            while running.len() < self.limits.max_parallel {
+            while !cancelled && running.len() < self.limits.max_parallel {
                 if self.graph.total_cost() >= self.limits.max_total_usd {
                     if !budget_hit {
                         budget_hit = true;
@@ -269,7 +320,7 @@ impl Runner {
                 if self.graph.ready().is_empty() {
                     break;
                 }
-                if budget_hit {
+                if budget_hit || cancelled {
                     break;
                 }
                 continue;
@@ -344,7 +395,7 @@ impl Runner {
         let total = self.graph.total_cost();
         // Node trong plan bị từ chối cũng là lỗi: báo "OK" trong khi một phần
         // plan không hề chạy là đúng kiểu sai nguy hiểm nhất.
-        let ok = failed == 0 && !budget_hit && rejected == 0;
+        let ok = failed == 0 && !budget_hit && rejected == 0 && !*self.cancel_tx.borrow();
         self.log.emit(
             None,
             EventKind::RunFinished {
@@ -398,8 +449,9 @@ impl Runner {
         // chỉ có một dep. Worktree mới luôn tạo từ HEAD, nên bỏ bước merge là
         // node sau nhìn vào cây trống và mọi chuỗi "làm rồi review" thành vô
         // nghĩa.
+        let mut conflicts = Vec::new();
         if !deps.is_empty() && isolate == Isolate::Worktree {
-            let conflicts = self
+            conflicts = self
                 .worktrees
                 .merge_into(id, &deps)
                 .await
@@ -426,15 +478,24 @@ impl Runner {
             },
         );
 
+        // Đụng độ đi qua kênh operator giống `protocol_block` — agent phải
+        // biết cây mình đang chạy CÓ THỂ thiếu việc của dep, chứ không chỉ có
+        // Note nằm im trong event log mà agent không đọc.
+        let mut protocol = protocol_block(&self.store);
+        if !conflicts.is_empty() {
+            protocol.push_str(&conflict_block(&conflicts));
+        }
+
         Ok(AgentRequest {
             node: id.clone(),
             task,
-            protocol: protocol_block(&self.store),
+            protocol,
             cwd,
             session,
             model,
             permission_mode: self.limits.permission_mode.clone(),
             timeout: self.limits.node_timeout,
+            cancel: self.cancel_tx.subscribe(),
         })
     }
 
@@ -498,9 +559,11 @@ impl Runner {
         summary: &str,
         tokens: (u64, u64),
     ) {
+        let mut session = None;
         if let Some(n) = self.graph.node_mut(id) {
             n.cost_usd = cost;
             n.summary = summary.to_string();
+            session = n.session.clone();
         }
         let _ = self.graph.set_state(
             id,
@@ -519,6 +582,7 @@ impl Runner {
                 tokens_in: ti,
                 tokens_out: to,
                 summary: summary.chars().take(400).collect(),
+                session,
             },
         );
         self.log.emit(

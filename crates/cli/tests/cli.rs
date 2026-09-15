@@ -221,3 +221,159 @@ fn web_live_thay_du_node_va_van_phuc_vu_sau_khi_graph_xong() {
     let r404 = http_get(port, "/khong-co-trang-nay").unwrap_or_default();
     assert!(r404.starts_with("HTTP/1.1 404"), "phải là 404: {r404}");
 }
+
+/// Log tối giản, viết tay từng dòng NDJSON đúng schema `Event` — đủ để test
+/// nhánh đọc log/tìm session/báo lỗi của `ask` mà không cần chạy agent thật.
+/// `node_finished` không có khoá `session` mô phỏng đúng log CŨ (trước khi
+/// việc 3 thêm trường này) — `#[serde(default)]` phải đọc được, không vỡ.
+fn ghi_log_toi_gian(
+    dir: &std::path::Path,
+    node: &str,
+    workspace: Option<&std::path::Path>,
+    session: Option<&str>,
+) -> std::path::PathBuf {
+    let p = dir.join("events.jsonl");
+    let mut lines = vec![format!(
+        r#"{{"seq":1,"at":"2024-01-01T00:00:00Z","kind":"run_started","goal":"g","run":"r1"}}"#
+    )];
+    lines.push(format!(
+        r#"{{"seq":2,"at":"2024-01-01T00:00:01Z","node":"{node}","kind":"node_added","title":"{node}","agent":"fake","deps":[],"by":"plan"}}"#
+    ));
+    if let Some(ws) = workspace {
+        lines.push(format!(
+            r#"{{"seq":3,"at":"2024-01-01T00:00:02Z","node":"{node}","kind":"workspace","action":"worktree","path":"{}"}}"#,
+            ws.display()
+        ));
+    }
+    let session_field = session
+        .map(|s| format!(r#","session":"{s}""#))
+        .unwrap_or_default();
+    lines.push(format!(
+        r#"{{"seq":4,"at":"2024-01-01T00:00:03Z","node":"{node}","kind":"node_finished","ok":true,"cost_usd":0.0,"tokens_in":0,"tokens_out":0,"summary":"xong"{session_field}}}"#
+    ));
+    std::fs::write(&p, lines.join("\n") + "\n").unwrap();
+    p
+}
+
+#[test]
+fn ask_bao_ro_khi_node_khong_ton_tai() {
+    let d = tmp();
+    let events = ghi_log_toi_gian(&d.0, "a", Some(&d.0), Some("sess-1"));
+    let o = Command::new(BIN)
+        .args(["ask", events.to_str().unwrap(), "khong-co", "hỏi gì đó"])
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("khong-co"), "phải nêu rõ node nào: {err}");
+}
+
+#[test]
+fn ask_bao_ro_khi_node_chua_co_session() {
+    let d = tmp();
+    // node_finished KHÔNG mang session — giống log cũ trước việc 3, hoặc node
+    // hỏng trước khi agent kịp trả về session_id.
+    let events = ghi_log_toi_gian(&d.0, "a", Some(&d.0), None);
+    let o = Command::new(BIN)
+        .args(["ask", events.to_str().unwrap(), "a", "hỏi gì đó"])
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("session"), "phải nói rõ thiếu session: {err}");
+}
+
+#[test]
+fn ask_bao_ro_khi_worktree_da_bi_xoa() {
+    let d = tmp();
+    let da_xoa = d.0.join("worktree-khong-con");
+    let events = ghi_log_toi_gian(&d.0, "a", Some(&da_xoa), Some("sess-1"));
+    let o = Command::new(BIN)
+        .args(["ask", events.to_str().unwrap(), "a", "hỏi gì đó"])
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("xoá") || err.contains("worktree"),
+        "phải nói rõ worktree đã mất: {err}"
+    );
+}
+
+#[test]
+fn runs_khong_co_thu_muc_thi_bao_ro_chu_khong_loi() {
+    let d = tmp();
+    let o = Command::new(BIN)
+        .args(["runs", "--root", d.0.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "chưa từng chạy lần nào không phải lỗi");
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(out.contains("chưa có lượt chạy"), "phải nói rõ: {out}");
+}
+
+#[test]
+fn runs_liet_ke_moi_nhat_truoc_va_khong_chet_vi_log_do_dang() {
+    let d = tmp();
+    let runs_dir = d.0.join(".agentgraph").join("runs");
+    // Run cũ: xong sạch, có run_finished.
+    let cu = runs_dir.join("20240101-000000-aaaaaa");
+    std::fs::create_dir_all(&cu).unwrap();
+    std::fs::write(
+        cu.join("events.jsonl"),
+        [
+            r#"{"seq":1,"at":"2024-01-01T00:00:00Z","kind":"run_started","goal":"muc tieu cu","run":"20240101-000000-aaaaaa"}"#,
+            r#"{"seq":2,"at":"2024-01-01T00:00:01Z","node":"a","kind":"node_added","title":"a","agent":"fake","deps":[],"by":"plan"}"#,
+            r#"{"seq":3,"at":"2024-01-01T00:00:02Z","node":"a","kind":"node_state","state":"done"}"#,
+            r#"{"seq":4,"at":"2024-01-01T00:00:03Z","kind":"run_finished","ok":true,"total_cost_usd":0.5}"#,
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+
+    // Run mới hơn: dở dang — bị giết giữa chừng, không có run_finished.
+    let moi = runs_dir.join("20240102-000000-bbbbbb");
+    std::fs::create_dir_all(&moi).unwrap();
+    std::fs::write(
+        moi.join("events.jsonl"),
+        [
+            r#"{"seq":1,"at":"2024-01-02T00:00:00Z","kind":"run_started","goal":"muc tieu moi","run":"20240102-000000-bbbbbb"}"#,
+            r#"{"seq":2,"at":"2024-01-02T00:00:01Z","node":"a","kind":"node_added","title":"a","agent":"fake","deps":[],"by":"plan"}"#,
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+
+    let o = Command::new(BIN)
+        .args(["runs", "--root", d.0.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "log dở dang không được làm lệnh chết");
+    let out = String::from_utf8_lossy(&o.stdout);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "phải liệt kê đúng 2 run: {out}");
+    assert!(
+        lines[0].contains("20240102-000000-bbbbbb"),
+        "mới nhất phải đứng trước: {out}"
+    );
+    assert!(lines[0].contains("DỞ DANG"), "run chưa xong: {out}");
+    assert!(lines[1].contains("20240101-000000-aaaaaa"));
+    assert!(lines[1].contains("OK"), "run xong sạch: {out}");
+    assert!(lines[1].contains("muc tieu cu"));
+}
+
+#[test]
+fn ask_bao_ro_khi_file_log_khong_ton_tai() {
+    let o = Command::new(BIN)
+        .args(["ask", "/khong/he/co/events.jsonl", "a", "hỏi gì đó"])
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("/khong/he/co/events.jsonl"),
+        "phải nói rõ đọc file nào: {err}"
+    );
+}

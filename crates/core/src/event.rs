@@ -60,6 +60,11 @@ pub enum EventKind {
         tokens_in: u64,
         tokens_out: u64,
         summary: String,
+        /// session_id (claude) / thread_id (codex) — cần để `agentgraph ask`
+        /// resume đúng phiên. `serde(default)`: log cũ chưa có trường này vẫn
+        /// phải replay được, chỉ là không resume được node của lần chạy đó.
+        #[serde(default)]
+        session: Option<String>,
     },
     /// Một đề nghị sửa harness — ghi cả khi bị từ chối, kèm lý do.
     Mutation {

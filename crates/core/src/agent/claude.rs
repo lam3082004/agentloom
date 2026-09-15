@@ -39,7 +39,11 @@ impl AgentAdapter for ClaudeAdapter {
             // Không có stdin thì claude chờ 3s rồi cảnh báo; đóng hẳn cho sạch.
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            // Nhóm tiến trình riêng, giống verifier trong run.rs: claude có
+            // thể đẻ tiến trình con (chạy shell, dev server...); huỷ giữa
+            // chừng mà chỉ giết đúng pid claude sẽ để lại đám con mồ côi.
+            .process_group(0);
         if !req.protocol.is_empty() {
             cmd.arg("--append-system-prompt").arg(&req.protocol);
         }
@@ -51,6 +55,9 @@ impl AgentAdapter for ClaudeAdapter {
         }
 
         let mut child = cmd.spawn()?;
+        // Lấy trước khi bị `wait`/`start_kill` làm mất: `Child::id()` trả về
+        // None một khi tiến trình đã được poll tới lúc thoát.
+        let pid = child.id();
         let stdout = child.stdout.take().expect("stdout đã piped");
         let stderr = child.stderr.take().expect("stderr đã piped");
 
@@ -98,10 +105,12 @@ impl AgentAdapter for ClaudeAdapter {
             Ok::<_, anyhow::Error>(())
         };
 
-        match tokio::time::timeout(req.timeout, parse).await {
-            Ok(r) => r?,
-            Err(_) => {
+        let mut cancel_rx = req.cancel.clone();
+        tokio::select! {
+            r = parse => r?,
+            _ = tokio::time::sleep(req.timeout) => {
                 let _ = child.start_kill();
+                if let Some(pid) = pid { super::kill_process_group(pid).await; }
                 log.emit(
                     Some(req.node.clone()),
                     EventKind::Note {
@@ -110,6 +119,21 @@ impl AgentAdapter for ClaudeAdapter {
                 );
                 out.ok = false;
                 out.summary = "timeout".into();
+                return Ok(out);
+            }
+            // Người dùng huỷ (q trong TUI, Ctrl-C): giết cả process group để
+            // không bỏ lại tiến trình claude — hay con của nó — chạy mồ côi.
+            _ = super::wait_for_cancel(&mut cancel_rx) => {
+                let _ = child.start_kill();
+                if let Some(pid) = pid { super::kill_process_group(pid).await; }
+                log.emit(
+                    Some(req.node.clone()),
+                    EventKind::Note {
+                        text: "bị huỷ — đã giết tiến trình claude".into(),
+                    },
+                );
+                out.ok = false;
+                out.summary = "huỷ theo yêu cầu người dùng".into();
                 return Ok(out);
             }
         }
@@ -262,6 +286,7 @@ mod tests {
             model: None,
             permission_mode: "acceptEdits".into(),
             timeout: std::time::Duration::from_secs(1),
+            cancel: tokio::sync::watch::channel(false).1,
         }
     }
 

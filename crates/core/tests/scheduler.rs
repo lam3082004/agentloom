@@ -731,6 +731,189 @@ isolate = "shared"
     );
 }
 
+fn con_song(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Huỷ giữa chừng (canceller().send(true), tương ứng q trong TUI / Ctrl-C)
+/// không được để lại tiến trình agent mồ côi. FakeAdapter với `SLEEP:` spawn
+/// một `sleep` THẬT nên PID kiểm được bằng `kill -0`, không chỉ giả lập trong
+/// bộ nhớ Rust.
+#[tokio::test]
+async fn huy_giua_chung_giet_tien_trinh_agent_khong_de_mo_coi() {
+    let d = tmp();
+    let log = EventLog::create(d.0.join("events.jsonl")).unwrap();
+    let mut rx = log.subscribe();
+    let r = Runner::new(
+        &d.0,
+        Limits {
+            max_parallel: 1,
+            ..Default::default()
+        },
+        log.clone(),
+        agentgraph_core::ids::RunId::generate(),
+    )
+    .await
+    .unwrap();
+    let canceller = r.canceller();
+    let handle = tokio::spawn(r.execute(plan(
+        r#"
+goal = "g"
+[[node]]
+id = "a"
+title = "a"
+agent = "fake"
+task = "SLEEP:600"
+isolate = "shared"
+"#,
+    )));
+
+    // Đợi tới khi fake đã spawn `sleep` thật và log lại PID của nó.
+    let pid: u32 = loop {
+        match rx.recv().await.unwrap().kind {
+            EventKind::Note { text } if text.starts_with("fake-pid:") => {
+                break text.strip_prefix("fake-pid:").unwrap().parse().unwrap();
+            }
+            _ => continue,
+        }
+    };
+    assert!(
+        con_song(pid),
+        "tiến trình sleep phải đang chạy trước khi huỷ"
+    );
+
+    canceller.send(true).unwrap();
+    let s = tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+        .await
+        .expect("huỷ không được làm treo cả lượt chạy")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        s.failed, 1,
+        "node đang chạy khi bị huỷ phải kết thúc HỎNG, không kẹt ở running"
+    );
+    assert!(!s.ok, "lượt chạy bị huỷ không được báo OK");
+
+    // Cho `kill -KILL` kịp có hiệu lực rồi kiểm PID thật đã biến mất.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !con_song(pid),
+        "tiến trình sleep phải bị giết, không được mồ côi"
+    );
+
+    let ev = EventLog::replay(d.0.join("events.jsonl")).unwrap();
+    assert!(
+        ev.iter()
+            .any(|e| matches!(&e.kind, EventKind::RunFinished { .. })),
+        "run_finished phải được ghi dù bị huỷ giữa chừng"
+    );
+    let last_state = ev
+        .iter()
+        .filter(|e| e.node.as_ref().map(|n| n.as_str()) == Some("a"))
+        .filter_map(|e| match &e.kind {
+            EventKind::NodeState { state } => Some(state.clone()),
+            _ => None,
+        })
+        .next_back();
+    assert_ne!(
+        last_state.as_deref(),
+        Some("running"),
+        "node không được kẹt ở trạng thái running trong event log"
+    );
+}
+
+/// Hai node song song ghi CÙNG một file với nội dung khác nhau; node thứ ba
+/// phụ thuộc cả hai thì merge nhánh thứ hai vào worktree của nó sẽ đụng độ.
+/// Trước đây orchestrator chỉ `git merge --abort` rồi ghi Note vào log — agent
+/// của node thứ ba không hề biết, chạy tiếp trên cây thiếu việc của một dep.
+#[tokio::test]
+async fn node_sau_duoc_bao_dung_do_merge_qua_protocol() {
+    let d = tmp();
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "a@b"],
+        vec!["config", "user.name", "t"],
+    ] {
+        std::process::Command::new("git")
+            .args(&args)
+            .current_dir(&d.0)
+            .output()
+            .unwrap();
+    }
+    std::fs::write(d.0.join("README.md"), "x").unwrap();
+    for args in [vec!["add", "-A"], vec!["commit", "-qm", "init"]] {
+        std::process::Command::new("git")
+            .args(&args)
+            .current_dir(&d.0)
+            .output()
+            .unwrap();
+    }
+
+    let (_, ev) = run(
+        &d.0,
+        plan(
+            r#"
+goal = "dung do"
+[[node]]
+id = "a"
+title = "a"
+agent = "fake"
+task = "WRITE:cung-file.txt:tu-a"
+
+[[node]]
+id = "b"
+title = "b"
+agent = "fake"
+task = "WRITE:cung-file.txt:tu-b"
+
+[[node]]
+id = "c"
+title = "c"
+agent = "fake"
+task = "phu thuoc ca hai"
+deps = ["a", "b"]
+"#,
+        ),
+    )
+    .await;
+
+    let note = ev.iter().find_map(|e| match &e.kind {
+        EventKind::Note { text } if text.contains("merge đụng độ") => Some(text.clone()),
+        _ => None,
+    });
+    assert!(note.is_some(), "phải có Note về đụng độ merge");
+
+    // Protocol chỉ lộ ra qua FakeAdapter — nó ghi lại nguyên văn cái nó nhận
+    // được, đúng như claude/codex thật sẽ nhận qua --append-system-prompt.
+    let protocol_cua_c = ev
+        .iter()
+        .find_map(|e| {
+            if e.node.as_ref().map(|n| n.as_str()) != Some("c") {
+                return None;
+            }
+            match &e.kind {
+                EventKind::Note { text } if text.starts_with("[fake:protocol]") => {
+                    Some(text.clone())
+                }
+                _ => None,
+            }
+        })
+        .expect("phải log lại protocol mà node c nhận được");
+    assert!(
+        protocol_cua_c.contains("ĐỤNG ĐỘ"),
+        "protocol của c phải cảnh báo đụng độ merge: {protocol_cua_c}"
+    );
+    assert!(
+        protocol_cua_c.contains("ag/") && protocol_cua_c.contains("/b"),
+        "protocol phải nêu tên branch bị đụng độ: {protocol_cua_c}"
+    );
+}
+
 /// Ở chế độ `shared` mọi node dùng chung một file mutation. Mỗi dòng chỉ được
 /// áp đúng một lần — nếu không, node chạy sau sẽ áp lại mutation của node
 /// trước và nhận nhầm mình là cha của node spawn.
