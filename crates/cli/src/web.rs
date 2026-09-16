@@ -260,6 +260,29 @@ impl App {
                 if let Some(h) = RunHandle::from_disk(id, root.clone(), events) {
                     found.push(h);
                 }
+                // Lượt "hỏi lại" (`api_ask`) không có thư mục riêng — log của
+                // nó nằm cạnh `events.jsonl` trong CHÍNH thư mục run gốc
+                // (`ask-<node>-<runid>.jsonl`, xem `api_ask`). Không quét thêm
+                // ở đây thì sau khi web restart, mọi lượt hỏi lại biến mất
+                // khỏi lịch sử — file vẫn còn trên đĩa nhưng không ai tìm ra.
+                let Ok(rd2) = std::fs::read_dir(entry.path()) else {
+                    continue;
+                };
+                for f in rd2.flatten() {
+                    let name = f.file_name().to_string_lossy().into_owned();
+                    if !name.starts_with("ask-") || !name.ends_with(".jsonl") {
+                        continue;
+                    }
+                    let ask_id = name.trim_end_matches(".jsonl").to_string();
+                    if known.iter().any(|h| h.id == ask_id)
+                        || found.iter().any(|h: &RunHandle| h.id == ask_id)
+                    {
+                        continue;
+                    }
+                    if let Some(h) = RunHandle::from_disk(ask_id, root.clone(), f.path()) {
+                        found.push(h);
+                    }
+                }
             }
         }
         if found.is_empty() {
@@ -1109,6 +1132,60 @@ mod tests {
         )
         .await;
         assert_eq!(code, 200);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// Bug thật: `api_ask` ghi log của lượt "hỏi lại" ngay CẠNH
+    /// `events.jsonl` trong thư mục run gốc (`ask-<node>-<runid>.jsonl`),
+    /// không phải thành thư mục run riêng. `load_history` trước đây chỉ quét
+    /// các THƯ MỤC con của `.agentloom/runs` nên restart server xong là mọi
+    /// lượt hỏi lại biến mất khỏi lịch sử — file vẫn còn trên đĩa, chỉ là
+    /// không ai còn tìm ra để hiện trên dashboard.
+    #[tokio::test]
+    async fn luot_hoi_lai_khong_mat_khoi_lich_su_sau_khi_restart() {
+        let root = tmp_dir("ask-hist");
+        let run = "20260101-000000-cccccc";
+        ghi_luot_cu(&root, run, "lượt gốc", true);
+        // Mô phỏng đúng những gì `api_ask` ghi: file `ask-*.jsonl` nằm trong
+        // CHÍNH thư mục của lượt gốc, có `run_started`/`run_finished` riêng.
+        let ask_path = root
+            .join(".agentloom/runs")
+            .join(run)
+            .join("ask-chinh-20260101-000001-dddddd.jsonl");
+        let log = EventLog::create(&ask_path).unwrap();
+        log.emit(
+            None,
+            EventKind::RunStarted {
+                goal: "hỏi lại chinh: vì sao?".into(),
+                run: RunId::generate(),
+            },
+        );
+        log.emit(
+            None,
+            EventKind::RunFinished {
+                ok: true,
+                total_cost_usd: 0.0,
+            },
+        );
+
+        // App MỚI (mô phỏng server vừa khởi động lại) — không có gì trong bộ
+        // nhớ, chỉ dựa vào `load_history` quét đĩa.
+        let app = App::new(true, root.clone());
+        let token = app.token().to_string();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            axum::serve(listener, router(app)).await.unwrap();
+        });
+        let (code, body) = http(port, "GET", "/api/runs", "127.0.0.1", Some(&token), None).await;
+        assert_eq!(code, 200);
+        let list: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+        let ids: Vec<_> = list.iter().map(|r| r["id"].as_str().unwrap()).collect();
+        assert!(
+            ids.contains(&"ask-chinh-20260101-000001-dddddd"),
+            "lượt hỏi lại phải còn trong lịch sử sau restart: {body}"
+        );
+        assert!(ids.contains(&run));
         std::fs::remove_dir_all(root).ok();
     }
 

@@ -206,16 +206,27 @@ pub async fn scan(root: impl AsRef<Path>) -> Vec<RunJunk> {
         Vec::new()
     };
 
-    let base = repo_root.join(".agentloom");
+    // `runs` (event log của `agentloom run`/`ask`/web) luôn nằm ngay dưới
+    // `root` mà người dùng đưa — xem `main.rs`/`web.rs`. Nhưng `worktrees`
+    // (và branch) luôn nằm ở gốc REPO GIT (`Worktrees::discover`), vì `git
+    // worktree add` cần chạy từ đó. Khi `root` không trùng `repo_root` (ví dụ
+    // `root` là một thư mục con chưa init git, nằm trong một repo git khác ở
+    // ngoài) thì hai thứ này ở HAI chỗ khác nhau — gộp chung một `base` khiến
+    // `scan` đọc nhầm `events.jsonl` của repo ngoài (hoặc không thấy gì) và
+    // báo sai "chưa xong" cho lượt đã chạy hẳn hoi.
+    let runs_base = root.join(".agentloom");
+    let wt_base = repo_root.join(".agentloom");
     let mut ids: Vec<String> = Vec::new();
-    for sub in ["runs", "worktrees"] {
-        let Ok(rd) = std::fs::read_dir(base.join(sub)) else {
-            continue;
-        };
-        for e in rd.flatten() {
-            let id = e.file_name().to_string_lossy().into_owned();
-            if e.path().is_dir() && !ids.contains(&id) {
-                ids.push(id);
+    for base in [&runs_base, &wt_base] {
+        for sub in ["runs", "worktrees"] {
+            let Ok(rd) = std::fs::read_dir(base.join(sub)) else {
+                continue;
+            };
+            for e in rd.flatten() {
+                let id = e.file_name().to_string_lossy().into_owned();
+                if e.path().is_dir() && !ids.contains(&id) {
+                    ids.push(id);
+                }
             }
         }
     }
@@ -232,9 +243,9 @@ pub async fn scan(root: impl AsRef<Path>) -> Vec<RunJunk> {
 
     let mut out = Vec::new();
     for run in ids {
-        let log_dir = base.join("runs").join(&run);
+        let log_dir = runs_base.join("runs").join(&run);
         let (goal, finished, recent) = doc_tom_tat(&log_dir.join("events.jsonl"));
-        let wt_dir = base.join("worktrees").join(&run);
+        let wt_dir = wt_base.join("worktrees").join(&run);
         let mut worktrees = Vec::new();
         if let Ok(rd) = std::fs::read_dir(&wt_dir) {
             for e in rd.flatten() {
@@ -284,6 +295,13 @@ pub async fn clean(root: impl AsRef<Path>, targets: &[RunJunk], opts: &Options) 
     } else {
         root.to_path_buf()
     };
+    // Prune TRƯỚC vòng lặp, không phải sau: một worktree bị xoá tay (thư mục
+    // mất nhưng git vẫn còn đăng ký) khiến `scan` báo "0 worktree" cho lượt
+    // đó — vòng lặp bên dưới không còn gì để `worktree remove` — nhưng
+    // `branch -D` vẫn bị git từ chối vì branch "còn dùng bởi worktree" đăng
+    // ký mồ côi ấy. Prune ở cuối (như trước) dọn xong quá muộn: nó chỉ có
+    // ích cho LẦN GỌI SAU, còn lần này branch xoá vẫn lỗi.
+    let _ = git(&repo_root, &["worktree", "prune"]).await;
     let mut d = Done::default();
     for t in targets {
         if let Some(ly_do) = t.risk()
@@ -451,6 +469,80 @@ mod tests {
         std::fs::remove_dir_all(d).ok();
     }
 
+    /// Bug thật: khi `root` KHÔNG phải gốc repo git (ví dụ một thư mục con
+    /// chưa `git init`, nằm trong một repo git khác ở ngoài), `agentloom
+    /// run`/`web` ghi `events.jsonl` ngay dưới `root` đó (xem `main.rs`,
+    /// `web.rs`), còn `Worktrees::discover` (xem `workspace.rs`) lại đặt
+    /// worktree ở GỐC REPO GIT — hai chỗ khác nhau. `scan` cũ gộp chung một
+    /// `base = repo_root.join(".agentloom")` nên đọc nhầm (hoặc không thấy)
+    /// event log thật, báo sai "chưa xong" cho một lượt đã `run_finished`
+    /// hẳn hoi.
+    #[tokio::test]
+    async fn scan_dung_dung_event_log_khi_root_khong_phai_goc_repo() {
+        let outer = std::env::temp_dir().join(format!("ag-clean-outer-{}", uuid::Uuid::new_v4()));
+        let inner = outer.join("con-chua-git");
+        std::fs::create_dir_all(&inner).unwrap();
+        sh(&outer, &["init", "-q"]);
+        sh(&outer, &["config", "user.email", "a@b"]);
+        sh(&outer, &["config", "user.name", "t"]);
+        std::fs::write(outer.join("README.md"), "x").unwrap();
+        sh(&outer, &["add", "-A"]);
+        sh(&outer, &["commit", "-qm", "init"]);
+
+        let run = "20260101-000000-eeeeee";
+        // Event log thật: dưới `inner` (đúng như `run --root inner` sẽ ghi).
+        let log =
+            EventLog::create(inner.join(".agentloom/runs").join(run).join("events.jsonl")).unwrap();
+        log.emit(
+            None,
+            EventKind::RunStarted {
+                goal: "việc trong thư mục con".into(),
+                run: RunId::generate(),
+            },
+        );
+        log.emit(
+            None,
+            EventKind::RunFinished {
+                ok: true,
+                total_cost_usd: 0.0,
+            },
+        );
+        lam_cu(&inner, run);
+        // Worktree thật: ở GỐC repo git `outer` (đúng như `Worktrees::discover`).
+        let wt = outer.join(".agentloom/worktrees").join(run).join("a");
+        sh(
+            &outer,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                &format!("al/{run}/a"),
+                &wt.to_string_lossy(),
+                "HEAD",
+            ],
+        );
+
+        let js = scan(&inner).await;
+        assert_eq!(js.len(), 1, "{js:?}");
+        let j = &js[0];
+        assert_eq!(j.goal, "việc trong thư mục con", "{j:?}");
+        assert!(
+            j.finished,
+            "log đã có run_finished, không được coi là dở dang: {j:?}"
+        );
+        assert!(
+            j.log_bytes > 0,
+            "phải đọc đúng event log dưới root, không phải dưới repo_root"
+        );
+        assert_eq!(
+            j.worktrees.len(),
+            1,
+            "worktree ở gốc repo vẫn phải thấy: {j:?}"
+        );
+
+        std::fs::remove_dir_all(&outer).ok();
+    }
+
     #[tokio::test]
     async fn mac_dinh_giu_branch_va_log_chi_go_worktree() {
         let run = "20260101-000000-bbbbbb";
@@ -500,6 +592,45 @@ mod tests {
         assert!(!d.join(".agentloom/runs").join(run).exists());
         assert_eq!(sh(&d, &["branch", "--list", "al/*"]), "");
         assert_eq!(sh(&d, &["worktree", "list"]).lines().count(), 1);
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    /// Bug thật: worktree bị xoá TAY (thư mục mất, nhưng git vẫn còn đăng ký
+    /// — `git worktree list` báo "prunable"). `scan` đúng đắn báo "0
+    /// worktree" cho lượt này (thư mục không còn), nên vòng lặp `worktree
+    /// remove` trong `clean` không có gì để làm. Nhưng git vẫn từ chối
+    /// `branch -D` vì branch "còn dùng bởi worktree" đăng ký mồ côi đó —
+    /// prune phải chạy TRƯỚC khi xoá branch trong CÙNG một lần gọi `clean`,
+    /// không phải sau (prune ở cuối chỉ có ích cho lần gọi kế tiếp).
+    #[tokio::test]
+    async fn worktree_mo_coi_khong_chan_duoc_xoa_branch() {
+        let run = "20260101-000000-ffffff";
+        let d = dung_repo("mocoi", run, true);
+        lam_cu(&d, run);
+        // Xoá tay thư mục worktree của node "a" (đã commit, sạch) — mô phỏng
+        // người dùng `rm -rf` thay vì `git worktree remove`.
+        std::fs::remove_dir_all(d.join(".agentloom/worktrees").join(run).join("a")).unwrap();
+        let js = scan(&d).await;
+        assert_eq!(
+            js[0].worktrees.len(),
+            1,
+            "chỉ còn thấy node b: {:?}",
+            js[0].worktrees
+        );
+
+        let done = clean(
+            &d,
+            &js,
+            &Options {
+                branches: true,
+                logs: false,
+                force: true,
+            },
+        )
+        .await;
+        assert!(done.errors.is_empty(), "branch -D không được lỗi: {done:?}");
+        assert_eq!(done.branches, 2, "{done:?}");
+        assert_eq!(sh(&d, &["branch", "--list", "al/*"]), "");
         std::fs::remove_dir_all(d).ok();
     }
 
