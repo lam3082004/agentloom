@@ -50,9 +50,14 @@ impl AgentAdapter for FakeAdapter {
             // để các lệnh khác trong task (`SLEEP:`...) không lẫn vào.
             // Kết mỗi dòng bằng '\n' như agent thật: orchestrator coi dòng cuối
             // chưa xuống dòng là dòng đang viết dở.
+            // `skip_while`: viết `EMIT:` rồi xuống dòng mới tới JSON là cách
+            // tự nhiên nhất trong plan TOML. Không bỏ qua dòng trống đầu thì
+            // `take_while` dừng ngay tại đó và NUỐT SẠCH mutation — node con
+            // không bao giờ được spawn mà chẳng có lỗi nào.
             let lines: Vec<&str> = rest
                 .lines()
                 .map(str::trim)
+                .skip_while(|l| l.is_empty())
                 .take_while(|l| l.starts_with('{'))
                 .collect();
             std::fs::write(
@@ -135,6 +140,33 @@ impl AgentAdapter for FakeAdapter {
 mod tests {
     use super::*;
     use crate::ids::NodeId;
+
+    /// Bug thật gặp khi viết plan TOML: `task = "EMIT:\n{...}"` — xuống dòng
+    /// ngay sau `EMIT:` khiến mọi mutation bị nuốt sạch, file mutation ghi ra
+    /// rỗng, node con không bao giờ được spawn và không có lỗi nào báo.
+    #[tokio::test]
+    async fn emit_xuong_dong_ngay_sau_dau_hai_cham_van_ghi_du_mutation() {
+        let d = std::env::temp_dir().join(format!("ag-fk-emit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        let log = EventLog::create(d.join("e.jsonl")).unwrap();
+        let req = AgentRequest {
+            node: NodeId::new("n").unwrap(),
+            task: "việc của tôi\nEMIT:\n{\"op\":\"spawn\",\"id\":\"con\",\"agent\":\"fake\",\"task\":\"x\"}\n                   {\"op\":\"write_memory\",\"key\":\"k\",\"value\":\"v\"}"
+                .into(),
+            protocol: String::new(),
+            cwd: d.clone(),
+            session: None,
+            model: None,
+            permission_mode: "acceptEdits".into(),
+            timeout: std::time::Duration::from_secs(5),
+            cancel: tokio::sync::watch::channel(false).1,
+        };
+        FakeAdapter::default().run(req, &log).await.unwrap();
+        let ghi = std::fs::read_to_string(d.join(crate::harness::MUTATION_FILE)).unwrap();
+        assert_eq!(ghi.lines().count(), 2, "phải ghi đủ hai mutation: {ghi:?}");
+        assert!(ghi.contains("\"id\":\"con\""), "{ghi}");
+        std::fs::remove_dir_all(d).ok();
+    }
 
     /// Bug thật bắt được khi chạy `agentloom ask` với claude thật: request
     /// dùng kênh huỷ dùng-một-lần (`watch::channel(false).1`, `Sender` bị rớt
