@@ -192,6 +192,7 @@
   .summary{margin-top:8px;padding:8px 10px;border-radius:9px;background:var(--raised);color:var(--ink2);white-space:pre-wrap;
            max-height:110px;overflow:auto;font-size:12.5px}
   .summary.bad{background:var(--bad-soft);color:var(--bad)}
+  #askBtn{margin-top:10px;width:100%;justify-content:center}
   .detail{display:flex;flex-direction:column;min-height:0;flex:1}
   .log{flex:1;min-height:0;margin:0;padding:10px 14px;overflow:auto;white-space:pre-wrap;word-break:break-word;
        font:12px/1.6 var(--mono);color:var(--ink2);background:var(--sunken)}
@@ -348,6 +349,7 @@
         </div>
         <div class="ws" id="dWsBox" hidden><span class="muted">⌂</span><code class="mono" id="dWs"></code><button class="btn ghost" id="copyWs">chép</button></div>
         <div class="summary" id="dSummary" hidden></div>
+        <button class="btn" id="askBtn" hidden>💬 Hỏi lại agent này</button>
       </div>
       <pre class="log" id="log"></pre>
     </div>
@@ -395,6 +397,23 @@ Nếu có nhiều module độc lập cần sửa, hãy giao mỗi module cho m�
       <span class="err" id="formErr" role="alert"></span>
       <button class="btn" value="cancel">Huỷ</button>
       <button class="btn primary" id="startBtn" value="default">▶ Chạy</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="askDlg" aria-labelledby="askTitle">
+  <form method="dialog" id="askForm">
+    <div class="dlg-h"><h3 id="askTitle">Hỏi lại agent</h3><button class="btn ghost" value="cancel" aria-label="Đóng">✕</button></div>
+    <div class="dlg-b">
+      <div class="hint" id="askWho"></div>
+      <label class="f" for="askQ">Câu hỏi</label>
+      <textarea class="inp" id="askQ" placeholder="Ví dụ: vì sao bạn chọn cách này? Có test nào chưa chạy không?"></textarea>
+      <div class="hint">Agent resume đúng phiên cũ trong worktree của nó — còn nguyên ngữ cảnh, và có thể sửa tiếp file ở đó.</div>
+    </div>
+    <div class="dlg-f">
+      <span class="err" id="askErr" role="alert"></span>
+      <button class="btn" value="cancel">Huỷ</button>
+      <button class="btn primary" id="askSend" value="default">Gửi</button>
     </div>
   </form>
 </dialog>
@@ -718,6 +737,27 @@ $("histBtn").addEventListener("click", async () => {
   renderHistory(); $("histDlg").showModal(); $("histQ").focus();
   await refreshRuns();
 });
+$("askBtn").addEventListener("click", () => {
+  if (!sel || !view) return;
+  const n = view.nodes[sel] || {};
+  $("askWho").textContent = `${sel} · ${n.agent || ""}${n.model ? " · " + n.model : ""}`;
+  $("askErr").textContent = ""; $("askQ").value = "";
+  $("askDlg").showModal(); $("askQ").focus();
+});
+$("askForm").addEventListener("submit", async e => {
+  if (e.submitter && e.submitter.value === "cancel") return;
+  e.preventDefault();
+  const q = $("askQ").value.trim(), node = sel, id = runId;
+  if (!q) { $("askErr").textContent = "Chưa nhập câu hỏi."; return; }
+  const btn = $("askSend"); btn.disabled = true; btn.textContent = "Đang gửi…";
+  try {
+    const r = await api(`/api/runs/${encodeURIComponent(id)}/ask`, { method: "POST", body: JSON.stringify({ node, question: q }) });
+    $("askDlg").close();
+    await refreshRuns();
+    selectRun(r.id);
+  } catch (err) { $("askErr").textContent = err.message; }
+  finally { btn.disabled = false; btn.textContent = "Gửi"; }
+});
 $("histQ").addEventListener("input", renderHistory);
 $("histF").addEventListener("change", renderHistory);
 $("newBtn").addEventListener("click", openNew);
@@ -930,6 +970,9 @@ function renderDetail(){
   $("dBy").textContent = n.by_agent ? "agent (tự spawn)" : "prompt của bạn";
   $("dDeps").textContent = n.deps && n.deps.length ? n.deps.join(", ") : "—";
   $("dWsBox").hidden = !n.workspace; $("dWs").textContent = n.workspace || ""; $("dWs").title = n.workspace || "";
+  // Chỉ hỏi lại được node đã chạy xong (mới có session) và chỉ khi server này
+  // được phép chạy agent.
+  $("askBtn").hidden = !(meta && meta.can_start && (n.state === "done" || n.state === "failed"));
   const sum = $("dSummary"); sum.hidden = !n.summary; sum.textContent = n.summary || ""; sum.className = "summary" + (n.state === "failed" ? " bad" : "");
   const log = $("log");
   log.replaceChildren(...(n.lines || []).map(l => h("span", { class: kind(l), text: l + "\n" })));

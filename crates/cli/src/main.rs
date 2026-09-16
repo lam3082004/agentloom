@@ -452,45 +452,14 @@ async fn ask(events: PathBuf, node: String, question: String, plain: bool) -> an
     let node_id =
         NodeId::new(&node).map_err(|e| anyhow::anyhow!("node id '{node}' không hợp lệ: {e}"))?;
 
-    let mut agent = None;
-    let mut cwd = None;
-    let mut session = None;
-    let mut found = false;
-    for e in &evs {
-        if e.node.as_ref() != Some(&node_id) {
-            continue;
-        }
-        found = true;
-        match &e.kind {
-            agentloom_core::event::EventKind::NodeAdded { agent: a, .. } => {
-                agent = Some(a.clone());
-            }
-            // Node có thể được resume nhiều lần với worktree khác nhau chỉ
-            // khi bị spawn lại — trong một lượt chạy, dòng cuối là đúng.
-            agentloom_core::event::EventKind::Workspace { path, .. } => {
-                cwd = Some(PathBuf::from(path));
-            }
-            agentloom_core::event::EventKind::NodeFinished { session: s, .. } if s.is_some() => {
-                session = s.clone();
-            }
-            _ => {}
-        }
-    }
-
-    if !found {
-        anyhow::bail!("node '{node}' không tồn tại trong {}", events.display());
-    }
-    let agent =
-        agent.ok_or_else(|| anyhow::anyhow!("node '{node}' không có bản ghi agent trong log"))?;
-    let session = session.ok_or_else(|| {
-        anyhow::anyhow!(
-            "node '{node}' không có session — chưa chạy xong lần nào nên không resume được"
+    let t = agentloom_core::ask::resolve(&evs, &node_id).with_context(|| {
+        format!(
+            "không hỏi lại được node '{node}' trong {}",
+            events.display()
         )
     })?;
-    let cwd = cwd.ok_or_else(|| anyhow::anyhow!("node '{node}' không có workspace trong log"))?;
-    if !cwd.exists() {
-        anyhow::bail!("worktree của node '{node}' đã bị xoá: {}", cwd.display());
-    }
+    let (agent, cwd, session) = (t.agent, t.cwd, t.session);
+
     let Some(adapter) = adapter_for(&agent) else {
         anyhow::bail!("agent '{agent}' không có adapter");
     };

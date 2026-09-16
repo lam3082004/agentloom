@@ -59,6 +59,8 @@ Agent chính có thể tự giao việc cho agent con. Dashboard chia làm bốn
   cuộn để zoom, nút `⤢` để vừa khung.
 - **Hoạt động trực tiếp**: mọi việc của mọi agent theo thời gian, mới nhất lên đầu;
   tích "chỉ agent đang chọn" để lọc.
+- **Hỏi lại**: bấm một agent đã chạy xong rồi bấm **💬 Hỏi lại agent này** —
+  xem [mục 7](#7-hỏi-lại-một-agent-đã-chạy-xong).
 - **Chi tiết agent**: bấm một thẻ hoặc một dòng để xem model **và ai chọn nó**
   (`bạn chọn` / `agent “chinh” chọn` / `mặc định của CLI`), thời gian, chi phí,
   token, thư mục worktree (có nút chép) và log đầy đủ. Trên thẻ, model do agent
@@ -388,6 +390,11 @@ Dùng khi:
 - muốn hiểu **lý do** một thay đổi mà không phải đọc lại toàn bộ diff;
 - review phát hiện vấn đề — nhờ chính agent đó sửa tiếp với đầy đủ ngữ cảnh;
 - node hỏng — hỏi agent nó đã vướng ở đâu.
+
+Trên **dashboard** thì không cần gõ lệnh: bấm một agent đã chạy xong, rồi bấm
+**💬 Hỏi lại agent này**. Lượt hỏi hiện ra như một lượt chạy riêng trong ô chọn
+(`hỏi lại <node>: <câu hỏi>`) — xem log trực tiếp, dừng được giữa chừng, và hỏi
+tiếp câu nữa ngay trên lượt hỏi đó.
 
 Chạy được với cả `claude` và `codex`. Worktree của node phải còn trên đĩa (xem
 [mục 11](#11-dọn-dẹp) — đừng dọn trước khi hỏi xong).

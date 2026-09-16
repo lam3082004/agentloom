@@ -21,7 +21,7 @@
 
 use agentloom_core::agent::known_agents;
 use agentloom_core::config::{Limits, Plan};
-use agentloom_core::event::EventLog;
+use agentloom_core::event::{EventKind, EventLog, Origin};
 use agentloom_core::graph::{Isolate, NodeSpec};
 use agentloom_core::ids::{NodeId, RunId};
 use agentloom_core::run::Runner;
@@ -295,6 +295,7 @@ pub fn router(app: App) -> Router {
         .route("/api/runs/{id}/view", get(api_view))
         .route("/api/runs/{id}/events", get(api_events))
         .route("/api/runs/{id}/cancel", post(api_cancel))
+        .route("/api/runs/{id}/ask", post(api_ask))
         .layer(middleware::from_fn_with_state(app.clone(), guard))
         .with_state(app)
 }
@@ -726,6 +727,178 @@ async fn api_start_run(State(app): State<App>, Json(req): Json<StartReq>) -> Res
     (StatusCode::CREATED, Json(StartResp { id })).into_response()
 }
 
+#[derive(Deserialize)]
+struct AskReq {
+    node: String,
+    question: String,
+}
+
+/// Hỏi lại agent của một node cũ, ngay trên dashboard.
+///
+/// Lượt hỏi lại được đăng ký như MỘT LƯỢT CHẠY nữa (log riêng cạnh log gốc,
+/// một node duy nhất): mọi thứ có sẵn — ảnh chụp, SSE, nút Dừng, panel chi
+/// tiết — dùng lại nguyên vẹn, không cần đường ống riêng cho câu hỏi.
+async fn api_ask(
+    State(app): State<App>,
+    UrlPath(id): UrlPath<String>,
+    Json(req): Json<AskReq>,
+) -> Response {
+    if !app.inner.can_start {
+        return loi(
+            StatusCode::FORBIDDEN,
+            "web này chỉ để xem — khởi động bằng `agentloom web` để hỏi lại agent",
+        );
+    }
+    let Some(h) = app.find(&id) else {
+        return loi(StatusCode::NOT_FOUND, "không có lượt chạy này");
+    };
+    let cau_hoi = req.question.trim().to_string();
+    if cau_hoi.is_empty() {
+        return loi(StatusCode::BAD_REQUEST, "chưa nhập câu hỏi");
+    }
+    let node_id = match NodeId::new(&req.node) {
+        Ok(n) => n,
+        Err(e) => return loi(StatusCode::BAD_REQUEST, format!("node không hợp lệ: {e}")),
+    };
+    let evs = match EventLog::replay(&h.events) {
+        Ok(e) => e,
+        Err(e) => {
+            return loi(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("không đọc được event log: {e}"),
+            );
+        }
+    };
+    let target = match agentloom_core::ask::resolve(&evs, &node_id) {
+        Ok(t) => t,
+        Err(e) => return loi(StatusCode::BAD_REQUEST, e.to_string()),
+    };
+    let Some(adapter) = agentloom_core::agent::adapter_for(&target.agent) else {
+        return loi(
+            StatusCode::BAD_REQUEST,
+            format!("agent '{}' không có adapter", target.agent),
+        );
+    };
+
+    let run_id = RunId::generate();
+    let ask_path = h
+        .events
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(format!("ask-{node_id}-{run_id}.jsonl"));
+    let log = match EventLog::create(&ask_path) {
+        Ok(l) => l,
+        Err(e) => {
+            return loi(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("không tạo được log hỏi lại: {e}"),
+            );
+        }
+    };
+    let ask_id = format!("ask-{node_id}-{run_id}");
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    app.add_run(RunHandle::live(
+        ask_id.clone(),
+        h.root.clone(),
+        &log,
+        Some(cancel_tx.clone()),
+    ));
+
+    let goal = format!("hỏi lại {node_id}: {cau_hoi}");
+    tokio::spawn(async move {
+        // Giữ sender sống suốt lượt hỏi: `watch::Sender` rớt sớm thì
+        // `changed()` trả Err ngay và adapter tưởng đã bị huỷ.
+        let _giu = cancel_tx;
+        log.emit(
+            None,
+            EventKind::RunStarted {
+                goal,
+                run: run_id.clone(),
+            },
+        );
+        log.emit(
+            Some(node_id.clone()),
+            EventKind::NodeAdded {
+                title: format!("hỏi lại {node_id}"),
+                agent: target.agent.clone(),
+                deps: vec![],
+                by: Origin::Plan,
+                model: None,
+            },
+        );
+        log.emit(
+            Some(node_id.clone()),
+            EventKind::Workspace {
+                action: "resume".into(),
+                path: target.cwd.to_string_lossy().into_owned(),
+            },
+        );
+        log.emit(
+            Some(node_id.clone()),
+            EventKind::NodeState {
+                state: "running".into(),
+            },
+        );
+        let out = adapter
+            .run(
+                agentloom_core::agent::AgentRequest {
+                    node: node_id.clone(),
+                    task: cau_hoi,
+                    // Không dạy protocol khi hỏi lại: đây là hỏi đáp, không
+                    // phải giao việc — agent không nên spawn node con.
+                    protocol: String::new(),
+                    cwd: target.cwd,
+                    session: Some(target.session),
+                    model: None,
+                    permission_mode: "acceptEdits".into(),
+                    timeout: Duration::from_secs(30 * 60),
+                    cancel: cancel_rx,
+                },
+                &log,
+            )
+            .await;
+        // Giữ lại session + chi phí của lượt hỏi: hỏi tiếp câu nữa ngay trên
+        // chính lượt hỏi lại này phải resume được, không thì mỗi câu hỏi là
+        // một ngõ cụt.
+        let (ok, summary, session, cost, tin, tout) = match out {
+            Ok(o) => (
+                o.ok,
+                o.summary,
+                o.session,
+                o.cost_usd,
+                o.tokens_in,
+                o.tokens_out,
+            ),
+            Err(e) => (false, e.to_string(), None, 0.0, 0, 0),
+        };
+        log.emit(
+            Some(node_id.clone()),
+            EventKind::NodeState {
+                state: if ok { "done" } else { "failed" }.into(),
+            },
+        );
+        log.emit(
+            Some(node_id),
+            EventKind::NodeFinished {
+                ok,
+                cost_usd: cost,
+                tokens_in: tin,
+                tokens_out: tout,
+                summary,
+                session,
+            },
+        );
+        log.emit(
+            None,
+            EventKind::RunFinished {
+                ok,
+                total_cost_usd: cost,
+            },
+        );
+    });
+    (StatusCode::CREATED, Json(StartResp { id: ask_id })).into_response()
+}
+
 async fn api_view(State(app): State<App>, UrlPath(id): UrlPath<String>) -> Response {
     match app.find(&id) {
         Some(h) => Json(h.snapshot()).into_response(),
@@ -774,7 +947,6 @@ async fn api_events(State(app): State<App>, UrlPath(id): UrlPath<String>) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentloom_core::event::{EventKind, Origin};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn tmp_dir(tag: &str) -> PathBuf {
@@ -1057,6 +1229,69 @@ mod tests {
             so_luong, 1,
             "id trùng phải chỉ còn một bản (live thế chỗ past), không được liệt kê hai lần"
         );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Hỏi lại chỉ resume được node ĐÃ chạy xong (mới có session) và node phải
+    /// có thật. Sai chỗ nào thì nói rõ chỗ đó chứ không trả 500.
+    #[tokio::test]
+    async fn hoi_lai_bao_ro_khi_khong_resume_duoc() {
+        let (log, dir) = tmp_log();
+        log.emit(
+            None,
+            EventKind::RunStarted {
+                goal: "g".into(),
+                run: RunId::generate(),
+            },
+        );
+        log.emit(
+            Some(NodeId::new("a").unwrap()),
+            EventKind::NodeAdded {
+                title: "a".into(),
+                agent: "fake".into(),
+                deps: vec![],
+                by: Origin::Plan,
+                model: None,
+            },
+        );
+        let app = App::new(true, std::env::temp_dir());
+        let token = app.token().to_string();
+        app.add_run(RunHandle::live("r".into(), dir.clone(), &log, None));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            axum::serve(listener, router(app)).await.unwrap();
+        });
+
+        let hoi = |path: &'static str, body: &'static str| {
+            let t = token.clone();
+            async move { http(port, "POST", path, "127.0.0.1", Some(&t), Some(body)).await }
+        };
+
+        let (code, body) = hoi(
+            "/api/runs/khong-co/ask",
+            r#"{"node":"a","question":"vì sao?"}"#,
+        )
+        .await;
+        assert_eq!(code, 404, "{body}");
+
+        let (code, body) = hoi("/api/runs/r/ask", r#"{"node":"a","question":"   "}"#).await;
+        assert_eq!(code, 400, "{body}");
+        assert!(body.contains("câu hỏi"), "{body}");
+
+        // Node có thật nhưng chưa chạy xong → chưa có session để resume.
+        let (code, body) = hoi("/api/runs/r/ask", r#"{"node":"a","question":"vì sao?"}"#).await;
+        assert_eq!(code, 400, "{body}");
+        assert!(body.contains("session"), "{body}");
+
+        // Node không có trong log.
+        let (code, body) = hoi(
+            "/api/runs/r/ask",
+            r#"{"node":"khong-ton-tai","question":"x"}"#,
+        )
+        .await;
+        assert_eq!(code, 400, "{body}");
+        assert!(body.contains("không có trong log"), "{body}");
         std::fs::remove_dir_all(dir).ok();
     }
 
