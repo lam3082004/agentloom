@@ -338,6 +338,73 @@ fn ask_bao_ro_khi_worktree_da_bi_xoa() {
     );
 }
 
+/// `clean` xoá thật thì không lấy lại được, nên mặc định phải là "chỉ in ra".
+/// Test giữ đúng ranh giới đó: chạy không cờ, mọi thứ còn nguyên.
+#[test]
+fn clean_khong_co_yes_thi_khong_xoa_gi() {
+    let d = tmp();
+    for c in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "a@b"],
+        vec!["config", "user.name", "t"],
+    ] {
+        Command::new("git")
+            .args(&c)
+            .current_dir(&d.0)
+            .output()
+            .unwrap();
+    }
+    std::fs::write(d.0.join("README.md"), "x").unwrap();
+    for c in [vec!["add", "-A"], vec!["commit", "-qm", "init"]] {
+        Command::new("git")
+            .args(&c)
+            .current_dir(&d.0)
+            .output()
+            .unwrap();
+    }
+    // Một lượt chạy cũ có worktree + branch + log.
+    let run = "20260101-000000-aaaaaa";
+    let wt = d.0.join(".agentloom/worktrees").join(run).join("a");
+    Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            &format!("al/{run}/a"),
+            &wt.to_string_lossy(),
+            "HEAD",
+        ])
+        .current_dir(&d.0)
+        .output()
+        .unwrap();
+    let log = d.0.join(".agentloom/runs").join(run).join("events.jsonl");
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    std::fs::write(&log, "").unwrap();
+
+    let o = Command::new(BIN)
+        .args(["clean", "--keep", "0", "--branches", "--logs"])
+        .current_dir(&d.0)
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}");
+    assert!(
+        out.contains("chưa xoá gì"),
+        "phải nói rõ là chưa xoá: {out}"
+    );
+    assert!(wt.exists(), "worktree phải còn nguyên khi chưa có --yes");
+    assert!(log.exists(), "log phải còn nguyên khi chưa có --yes");
+    let br = Command::new("git")
+        .args(["branch", "--list", "al/*"])
+        .current_dir(&d.0)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&br.stdout).contains(run),
+        "branch phải còn nguyên khi chưa có --yes"
+    );
+}
+
 /// `doctor` từng báo "✓ cô lập worktree bật" trong repo vừa `git init` — đúng
 /// tình huống worktree không tạo nổi. Người mới tin dấu ✓ rồi vấp ngay lượt đầu.
 #[test]

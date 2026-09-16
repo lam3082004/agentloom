@@ -90,6 +90,32 @@ enum Cmd {
         #[arg(long, default_value = ".")]
         root: PathBuf,
     },
+    /// Dọn worktree, branch, log của các lượt chạy cũ. Mặc định chỉ IN ra sẽ
+    /// dọn gì; thêm `--yes` mới xoá thật.
+    Clean {
+        /// Thư mục gốc của project.
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+        /// Chỉ dọn đúng các lượt này. Không có thì dọn tất cả trừ `--keep`
+        /// lượt mới nhất.
+        #[arg(long = "run")]
+        runs: Vec<String>,
+        /// Giữ lại N lượt mới nhất.
+        #[arg(long, default_value_t = 3)]
+        keep: usize,
+        /// Xoá luôn branch `al/<run>/*` — mất việc agent đã làm nếu chưa merge.
+        #[arg(long)]
+        branches: bool,
+        /// Xoá luôn event log — mất `runs`, `replay`, `ask` và lịch sử trên web.
+        #[arg(long)]
+        logs: bool,
+        /// Dọn cả lượt chưa xong và worktree còn thay đổi chưa commit.
+        #[arg(long)]
+        force: bool,
+        /// Xoá thật. Không có cờ này thì chỉ in ra.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Mở giao diện web: gõ prompt, chọn agent, model, thư mục rồi bấm chạy —
     /// xem graph các agent hoạt động trực tiếp.
     Web {
@@ -118,6 +144,15 @@ async fn main() -> anyhow::Result<()> {
             plain,
         } => ask(events, node, question, plain).await,
         Cmd::Runs { root } => runs(root).await,
+        Cmd::Clean {
+            root,
+            runs,
+            keep,
+            branches,
+            logs,
+            force,
+            yes,
+        } => clean(root, runs, keep, branches, logs, force, yes).await,
         Cmd::Web { port, root } => {
             let root = root.canonicalize().unwrap_or(root);
             web::serve(web::App::new(true, root), port).await
@@ -505,6 +540,123 @@ async fn ask(events: PathBuf, node: String, question: String, plain: bool) -> an
 /// `View::apply` để fold — id run có tiền tố `%Y%m%d-%H%M%S` (xem
 /// `RunId::generate`) nên sắp xếp chuỗi cũng chính là sắp theo thời gian,
 /// không cần phân tích lại timestamp.
+#[allow(clippy::too_many_arguments)]
+async fn clean(
+    root: PathBuf,
+    chon: Vec<String>,
+    keep: usize,
+    branches: bool,
+    logs: bool,
+    force: bool,
+    yes: bool,
+) -> anyhow::Result<()> {
+    use agentloom_core::clean::{Options, kho};
+    let all = agentloom_core::clean::scan(&root).await;
+    if all.is_empty() {
+        println!("không còn gì để dọn trong {}", root.display());
+        return Ok(());
+    }
+    // `--run` là chỉ định đích danh nên bỏ qua `--keep`; không thì giữ N lượt
+    // mới nhất (scan đã xếp mới nhất trước).
+    let targets: Vec<_> = if chon.is_empty() {
+        all.iter().skip(keep).cloned().collect()
+    } else {
+        all.iter()
+            .filter(|j| chon.iter().any(|c| c == &j.run))
+            .cloned()
+            .collect()
+    };
+    if !chon.is_empty() {
+        for c in &chon {
+            if !all.iter().any(|j| &j.run == c) {
+                println!("không thấy lượt chạy {c}");
+            }
+        }
+    }
+    if targets.is_empty() {
+        println!(
+            "{} lượt chạy, không lượt nào thuộc diện dọn (giữ {keep} lượt mới nhất)",
+            all.len()
+        );
+        return Ok(());
+    }
+
+    let opts = Options {
+        branches,
+        logs,
+        force,
+    };
+    let mut tong = 0;
+    for j in &targets {
+        let risk = j.risk();
+        let bo_qua = risk.is_some() && !force;
+        let dau = if bo_qua { "–" } else { "•" };
+        println!(
+            "{dau} {:<24} {} worktree · {} branch · log {} · {}",
+            j.run,
+            j.worktrees.len(),
+            j.branches.len(),
+            kho(j.log_bytes),
+            if j.goal.is_empty() {
+                "(không rõ mục tiêu)"
+            } else {
+                &j.goal
+            }
+        );
+        if let Some(r) = &risk {
+            println!("  {} {r}", if bo_qua { "bỏ qua:" } else { "vẫn dọn:" });
+        }
+        if !bo_qua {
+            tong += j.worktree_bytes + if logs { j.log_bytes } else { 0 };
+        }
+        let chua_merge: Vec<_> = j.branches.iter().filter(|b| b.unmerged).collect();
+        if branches && !chua_merge.is_empty() && !bo_qua {
+            println!(
+                "  xoá {} branch chưa merge vào HEAD: {}",
+                chua_merge.len(),
+                chua_merge
+                    .iter()
+                    .map(|b| b.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+
+    if !yes {
+        println!(
+            "\nsẽ giải phóng khoảng {} (chưa xoá gì). Thêm --yes để xoá thật.",
+            kho(tong)
+        );
+        if !branches {
+            println!("branch `al/*` được giữ — thêm --branches nếu muốn xoá.");
+        }
+        if !logs {
+            println!("event log được giữ — thêm --logs nếu muốn xoá (mất lịch sử trên web).");
+        }
+        return Ok(());
+    }
+
+    let done = agentloom_core::clean::clean(&root, &targets, &opts).await;
+    println!(
+        "\nđã gỡ {} worktree, xoá {} branch, {} log — giải phóng {}",
+        done.worktrees,
+        done.branches,
+        done.logs,
+        kho(done.bytes)
+    );
+    for (run, ly_do) in &done.skipped {
+        println!("bỏ qua {run}: {ly_do} (dùng --force nếu chắc chắn)");
+    }
+    for e in &done.errors {
+        eprintln!("lỗi: {e}");
+    }
+    if !done.errors.is_empty() {
+        anyhow::bail!("{} việc dọn không thành", done.errors.len());
+    }
+    Ok(())
+}
+
 async fn runs(root: PathBuf) -> anyhow::Result<()> {
     let dir = root.join(".agentloom").join("runs");
     let mut ids: Vec<String> = match std::fs::read_dir(&dir) {

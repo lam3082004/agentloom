@@ -667,28 +667,36 @@ Cờ này áp cho **claude**. **codex** luôn chạy với sandbox `workspace-wr
 ## 11. Dọn dẹp
 
 agentloom **không tự xoá** worktree và branch sau khi chạy — để bạn còn
-review, merge và `ask`. Chúng tích luỹ dần trong `.agentloom/worktrees/`.
-
-Dọn **một lượt chạy** (sau khi đã merge xong):
-
-```bash
-RUN=20260915-101500-a1b2c3
-for w in .agentloom/worktrees/$RUN/*/; do git worktree remove --force "$w"; done
-git worktree prune
-git branch --list "al/$RUN/*" | tr -d ' +*' | xargs -r git branch -D
-```
-
-Dọn **tất cả**:
+review, merge và `ask`. Chúng tích luỹ nhanh: 5 lượt × 2 node = 10 worktree +
+10 branch. Dọn bằng `agentloom clean`.
 
 ```bash
-for w in .agentloom/worktrees/*/*/; do git worktree remove --force "$w"; done
-git worktree prune
-git branch --list 'al/*' | tr -d ' +*' | xargs -r git branch -D
+agentloom clean                 # chỉ IN ra sẽ dọn gì, không xoá gì
+agentloom clean --yes           # gỡ worktree của các lượt cũ (giữ 3 lượt mới nhất)
 ```
 
-Log các lượt chạy nằm ở `.agentloom/runs/` — xoá thư mục con tương ứng nếu
-không cần xem lại. Skill và memory tích luỹ nằm ở `.agentloom/skills/` và
-`.agentloom/memory/`; **giữ lại** nếu muốn các lượt sau dùng tiếp.
+```
+• 20260915-101500-a1b2c3   2 worktree · 2 branch · log 6 KB · sửa module thanh toán
+– 20260915-104500-9fe304   2 worktree · 2 branch · log 6 KB · thêm test
+  bỏ qua: 1 worktree còn thay đổi chưa commit
+```
+
+Mặc định an toàn nhất: chỉ gỡ **worktree**, và bỏ qua lượt chạy chưa xong,
+lượt vừa được ghi log (có thể đang chạy ở tiến trình khác), và worktree còn
+thay đổi chưa commit.
+
+| Cờ | Tác dụng |
+| --- | --- |
+| `--yes` | xoá thật (không có thì chỉ in ra) |
+| `--keep N` | giữ N lượt mới nhất, mặc định 3 |
+| `--run ID` | chỉ dọn đúng lượt này (lặp lại được); bỏ qua `--keep` |
+| `--branches` | xoá luôn branch `al/<run>/*` — in rõ branch nào **chưa merge** vào HEAD trước khi xoá |
+| `--logs` | xoá luôn event log — mất `runs`, `replay`, `ask` và lịch sử trên dashboard |
+| `--force` | dọn cả lượt chưa xong và worktree còn thay đổi chưa commit |
+| `--root DIR` | project khác thư mục hiện tại |
+
+Skill và memory tích luỹ nằm ở `.agentloom/skills/` và `.agentloom/memory/`;
+`clean` **không đụng tới** chúng.
 
 Thêm `.agentloom/` vào `.gitignore` của project để không lỡ commit chúng.
 
@@ -726,6 +734,7 @@ agentloom run [PLAN] [--goal G] [--agent claude|codex] [--root DIR]
                [--permission-mode MODE=acceptEdits] [--plain | --web [--port 7878]]
 agentloom web [--port 7878] [--root DIR]
 agentloom runs [--root DIR]
+agentloom clean [--root DIR] [--run ID] [--keep N] [--branches] [--logs] [--force] [--yes]
 agentloom replay EVENTS [--plain | --web [--port 7878]]
 agentloom ask EVENTS NODE QUESTION [--plain]
 ```
@@ -818,7 +827,8 @@ kiểm tra header `Host` chặn trường hợp sau.
   node spawn có thể bị gán nhầm cha. Dùng `worktree` (mặc định) nếu cần chính xác.
 - **Merge đụng độ không tự giải quyết** — agent node sau được báo và phải tự xử
   lý.
-- **Không tự dọn** worktree, branch hay log — xem [mục 11](#11-dọn-dẹp).
+- **Không tự dọn** worktree, branch hay log sau khi chạy — dọn bằng
+  `agentloom clean`, xem [mục 11](#11-dọn-dẹp).
 - **`--budget` không cắt node đang chạy**, chỉ ngừng nạp node mới.
 - **Lịch sử web chỉ quét thư mục đã biết**: thư mục mặc định (`--root`) và các
   thư mục đã chạy trong phiên server. Lượt ở thư mục khác xem bằng

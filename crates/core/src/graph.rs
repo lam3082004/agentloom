@@ -41,6 +41,9 @@ impl NodeState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Như `Plan`: `tasks = ...` gõ nhầm phải báo lỗi chứ không lặng lẽ thành node
+// không có việc.
+#[serde(deny_unknown_fields)]
 pub struct NodeSpec {
     pub id: NodeId,
     pub title: String,

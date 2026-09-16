@@ -11,6 +11,10 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Khoá lạ là lỗi, không phải im lặng bỏ qua: gõ `[[nodes]]` thay vì `[[node]]`
+// thì plan vẫn parse được thành plan RỖNG, và lượt chạy báo "OK" sau vài
+// mili-giây mà chẳng agent nào chạy.
+#[serde(deny_unknown_fields)]
 pub struct Plan {
     pub goal: String,
     #[serde(default, rename = "node")]
@@ -19,6 +23,8 @@ pub struct Plan {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum PlanError {
+    #[error("plan không có node nào — mỗi node khai báo bằng một khối `[[node]]`")]
+    Empty,
     #[error("node '{0}' bị khai báo hai lần")]
     Duplicate(NodeId),
     #[error("node '{0}' phụ thuộc '{1}' nhưng plan không có node đó")]
@@ -36,6 +42,9 @@ impl Plan {
     /// lẽ từ chối node hỏng rồi lượt chạy vẫn báo "OK" — người viết plan
     /// tưởng việc đã xong trong khi chẳng node nào chạy.
     pub fn validate(&self) -> Result<(), PlanError> {
+        if self.nodes.is_empty() {
+            return Err(PlanError::Empty);
+        }
         let mut seen: HashSet<&NodeId> = HashSet::new();
         for n in &self.nodes {
             if !seen.insert(&n.id) {
@@ -117,6 +126,48 @@ impl Default for Limits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bug thật gặp khi dùng: gõ `[[nodes]]` (thừa chữ s) thì toml bỏ qua khoá
+    /// lạ, plan thành rỗng, và lượt chạy kết thúc "OK" trong vài mili-giây mà
+    /// không node nào chạy — người dùng tưởng việc đã xong.
+    #[test]
+    fn go_nham_khoa_node_thi_bao_loi_chu_khong_chay_rong() {
+        let toml = r#"
+goal = "dọn thử"
+
+[[nodes]]
+id = "mot"
+title = "node một"
+agent = "fake"
+task = "viec"
+"#;
+        let e = Plan::from_toml(toml).unwrap_err().to_string();
+        assert!(e.contains("nodes"), "lỗi phải chỉ đúng khoá gõ nhầm: {e}");
+
+        // Và nếu bằng cách nào đó vẫn ra plan rỗng thì validate phải chặn.
+        let rong = Plan {
+            goal: "g".into(),
+            nodes: vec![],
+        };
+        assert_eq!(rong.validate(), Err(PlanError::Empty));
+    }
+
+    #[test]
+    fn khoa_la_trong_node_cung_bao_loi() {
+        let e = Plan::from_toml(
+            r#"
+goal = "g"
+[[node]]
+id = "mot"
+title = "t"
+agent = "fake"
+tasks = "gõ nhầm"
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("tasks"), "{e}");
+    }
 
     #[test]
     fn doc_duoc_plan_toml() {
