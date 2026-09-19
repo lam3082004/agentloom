@@ -1,0 +1,65 @@
+# Customer Journey Map + điểm chạm + trải nghiệm đa kênh.
+#
+# Ba agent dựng ba phần của cùng một bức tranh, agent cuối ráp lại và tìm chỗ
+# đứt gãy giữa các kênh — chính là chỗ CJM hay bỏ sót nhất.
+goal = "Bản đồ hành trình khách hàng: <PHÂN KHÚC> - <MỤC TIÊU CỦA HỌ>"
+
+[[node]]
+id = "giai-doan"
+title = "Giai đoạn và hành vi"
+agent = "claude"
+model = "opus"
+task = """
+Dựng khung hành trình cho: <PHÂN KHÚC> muốn <MỤC TIÊU CỦA HỌ>.
+Dữ liệu nền ở dau-vao/ (nghiên cứu, số liệu, mô tả sản phẩm) — bám vào đó,
+chỗ nào là giả định thì đánh dấu rõ.
+
+Với mỗi giai đoạn (nhận biết → cân nhắc → sử dụng → gắn bó, điều chỉnh theo
+sản phẩm thật): việc khách đang cố làm · hành động cụ thể · suy nghĩ · cảm xúc
+(thang -2..+2) · câu hỏi trong đầu họ.
+
+Ghi vào ket-qua/hanh-trinh-giai-doan.md:
+## Phân khúc và bối cảnh ## Bảng hành trình theo giai đoạn ## Giả định cần kiểm chứng
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/hanh-trinh-giai-doan.md --muc 'Bảng hành trình' --muc 'Giả định' --tu-toi-thieu 500 --bang-toi-thieu 5"
+
+[[node]]
+id = "diem-cham"
+title = "Điểm chạm đa kênh"
+agent = "claude"
+model = "sonnet"
+task = """
+Liệt kê mọi điểm chạm của <PHÂN KHÚC> với sản phẩm/thương hiệu, theo TỪNG kênh:
+web, mobile app, email/SMS/notification, tổng đài và chăm sóc khách hàng, mạng
+xã hội, điểm giao dịch ngoại tuyến nếu có. Dữ liệu nền ở dau-vao/.
+
+Mỗi điểm chạm: kênh · mục đích của khách · ai sở hữu bên trong công ty · dữ liệu
+khách phải cung cấp · dữ liệu công ty đã có sẵn (chỗ bắt khách nhập lại thứ công
+ty đã biết là điểm đau kinh điển của omnichannel).
+
+Ghi vào ket-qua/hanh-trinh-diem-cham.md:
+## Bảng điểm chạm theo kênh ## Chỗ khách phải lặp lại thông tin ## Chủ sở hữu và khoảng trống
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/hanh-trinh-diem-cham.md --muc 'Bảng điểm chạm' --muc 'lặp lại' --tu-toi-thieu 400 --bang-toi-thieu 6"
+
+[[node]]
+id = "diem-dau"
+title = "Điểm đau và cơ hội"
+agent = "claude"
+model = "opus"
+deps = ["giai-doan", "diem-cham"]
+task = """
+Đọc hai tài liệu hanh-trinh-*.md trong ket-qua/ rồi ráp thành bản đồ hành trình
+hoàn chỉnh.
+
+Trọng tâm là chỗ ĐỨT GÃY:
+- khách chuyển kênh giữa chừng (app sang tổng đài, web sang cửa hàng) — mất gì?
+- chỗ cảm xúc tụt sâu nhất, và nguyên nhân gốc nằm ở kênh nào;
+- điểm chạm không ai sở hữu rõ ràng;
+- cơ hội cải thiện, xếp theo tác động × số khách đi qua.
+
+Ghi vào ket-qua/ban-do-hanh-trinh.md:
+## Tóm tắt ## Bản đồ hành trình đầy đủ (bảng) ## Điểm đứt gãy giữa các kênh
+## Cơ hội xếp ưu tiên ## Chỉ số theo dõi cho từng giai đoạn ## Giả định cần kiểm chứng
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/ban-do-hanh-trinh.md --muc 'Bản đồ hành trình' --muc 'đứt gãy' --muc 'Cơ hội' --muc 'Chỉ số' --tu-toi-thieu 700 --bang-toi-thieu 8"

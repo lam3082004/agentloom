@@ -1,0 +1,48 @@
+# Kế hoạch và lộ trình triển khai, kèm một agent chuyên phản biện kế hoạch.
+#
+# Node "phan-bien" tồn tại vì kế hoạch do AI viết luôn trơn tru một cách đáng
+# ngờ: mọi việc vừa khít, không ai nghỉ phép, không có gì phụ thuộc bên ngoài.
+goal = "Kế hoạch triển khai: <TÊN DỰ ÁN>"
+
+[[node]]
+id = "ke-hoach"
+title = "Kế hoạch và timeline"
+agent = "claude"
+model = "opus"
+task = """
+Lập kế hoạch triển khai cho: <TÊN DỰ ÁN>. Bối cảnh, phạm vi, nguồn lực ở dau-vao/.
+
+- Chia giai đoạn theo kết quả bàn giao được, không chia theo tháng.
+- Mỗi hạng mục: đầu ra cụ thể · ai làm (PO/BA/Designer/Dev/Marketing) · phụ
+  thuộc vào việc nào · thời lượng ước lượng · dấu hiệu "xong".
+- Đánh dấu đường găng (critical path) và các mốc cần quyết định của lãnh đạo.
+- Ghi rõ việc nghiên cứu người dùng nằm ở đâu — đừng để nó rơi vào cuối, lúc
+  đó phát hiện gì cũng không sửa kịp.
+
+Ghi vào ket-qua/ke-hoach.md:
+## Mục tiêu và phạm vi ## Giai đoạn ## Bảng công việc ## Đường găng
+## Mốc quyết định ## Ngoài phạm vi
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/ke-hoach.md --muc 'Giai đoạn' --muc 'Bảng công việc' --muc 'Đường găng' --muc 'Ngoài phạm vi' --tu-toi-thieu 500 --bang-toi-thieu 10"
+
+[[node]]
+id = "phan-bien"
+title = "Phản biện kế hoạch"
+agent = "claude"
+model = "opus"
+deps = ["ke-hoach"]
+task = """
+Đọc ket-qua/ke-hoach.md và tấn công nó. Bạn KHÔNG viết lại kế hoạch, bạn tìm
+chỗ nó sẽ vỡ.
+
+- Ước lượng nào lạc quan phi thực tế? Dựa vào đâu mà nói thế?
+- Phụ thuộc nào bị bỏ sót (phê duyệt, pháp lý, bên thứ ba, hạ tầng, nội dung)?
+- Giai đoạn nào giả định đầu vào hoàn hảo từ giai đoạn trước?
+- Nếu trễ hai tuần ở đường găng thì hỏng cái gì, cứu bằng cách nào?
+- Rủi ro nào đáng chuẩn bị phương án B ngay từ đầu?
+
+Ghi vào ket-qua/phan-bien-ke-hoach.md:
+## Rủi ro theo mức độ (bảng) ## Giả định ngầm trong kế hoạch ## Kịch bản trễ hạn
+## Đề xuất điều chỉnh kế hoạch
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/phan-bien-ke-hoach.md --muc 'Rủi ro' --muc 'Giả định ngầm' --muc 'trễ hạn' --muc 'điều chỉnh' --tu-toi-thieu 450 --bang-toi-thieu 5"

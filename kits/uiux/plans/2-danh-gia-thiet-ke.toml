@@ -1,0 +1,83 @@
+# Design critique: 3 lăng kính soi song song rồi gộp thành backlog xếp ưu tiên.
+#
+# Đặt mô tả màn hình / link Figma / ảnh chụp vào dau-vao/ trước khi chạy.
+goal = "Đánh giá thiết kế: <TÊN MÀN HÌNH / LUỒNG>"
+
+[[node]]
+id = "kha-dung"
+title = "Khả dụng (heuristic)"
+agent = "claude"
+model = "opus"
+task = """
+Đánh giá khả dụng của: <TÊN MÀN HÌNH / LUỒNG>. Tư liệu ở dau-vao/ — đọc hết
+trước khi nhận xét.
+
+Soi theo 10 heuristic của Nielsen (xem skill "thang đánh giá"). Với MỖI phát
+hiện: vị trí cụ thể · vấn đề · heuristic bị vi phạm · vì sao hại người dùng ·
+mức độ · đề xuất sửa. Đừng nhận xét chung chung kiểu "giao diện chưa trực quan".
+
+Ghi vào ket-qua/danh-gia-kha-dung.md:
+## Phạm vi ## Phát hiện (bảng) ## Ba vấn đề đáng sửa trước ## Điểm đang làm tốt
+Mục "đang làm tốt" bắt buộc có: phản biện mà không ghi nhận cái đúng thì lần
+sau người ta sửa hỏng luôn phần đang ổn.
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/danh-gia-kha-dung.md --muc 'Phát hiện' --muc 'đáng sửa trước' --muc 'làm tốt' --tu-toi-thieu 500 --bang-toi-thieu 5"
+
+[[node]]
+id = "tiep-can"
+title = "Khả năng tiếp cận"
+agent = "claude"
+model = "sonnet"
+task = """
+Đánh giá khả năng tiếp cận (accessibility) của: <TÊN MÀN HÌNH / LUỒNG>.
+Tư liệu ở dau-vao/.
+
+Soi: tương phản màu · cỡ chữ và vùng chạm · nhãn cho ô nhập · thứ tự tab và
+điều hướng bàn phím · trình đọc màn hình · phụ thuộc màu sắc làm tín hiệu duy
+nhất · chuyển động và thời gian chờ ép buộc · ngôn ngữ dễ hiểu.
+Chiếu theo WCAG 2.2 mức AA, ghi rõ tiêu chí nào (ví dụ 1.4.3 Contrast).
+
+Ghi vào ket-qua/danh-gia-tiep-can.md:
+## Phạm vi ## Vi phạm theo WCAG (bảng) ## Ảnh hưởng tới ai ## Cách sửa
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/danh-gia-tiep-can.md --muc 'Vi phạm' --muc 'Cách sửa' --tu-toi-thieu 400 --bang-toi-thieu 4"
+
+[[node]]
+id = "da-nen-tang"
+title = "Web và mobile"
+agent = "claude"
+model = "sonnet"
+task = """
+Đánh giá: <TÊN MÀN HÌNH / LUỒNG> trên CẢ HAI nền tảng web và mobile app.
+Tư liệu ở dau-vao/.
+
+Câu hỏi trọng tâm: chỗ nào thiết kế web bị bê nguyên sang mobile (hoặc ngược
+lại) mà không hợp bối cảnh? Soi: thao tác một tay, bàn phím che nội dung, điều
+hướng quay lại của hệ điều hành, responsive ở 360/768/1280, trạng thái rỗng -
+đang tải - lỗi - mạng yếu, và tính nhất quán giữa hai nền tảng (cùng thứ có bị
+gọi hai tên, đặt hai chỗ không).
+
+Ghi vào ket-qua/danh-gia-da-nen-tang.md:
+## Phạm vi ## Khác biệt web và mobile (bảng) ## Vấn đề riêng từng nền tảng ## Đề xuất
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/danh-gia-da-nen-tang.md --muc 'Khác biệt' --muc 'Đề xuất' --tu-toi-thieu 400 --bang-toi-thieu 4"
+
+[[node]]
+id = "backlog"
+title = "Backlog ưu tiên"
+agent = "claude"
+model = "opus"
+deps = ["kha-dung", "tiep-can", "da-nen-tang"]
+task = """
+Ba bản đánh giá trong ket-qua/ soi cùng một thiết kế từ ba góc. Gộp thành MỘT
+backlog mà team dev và PO dùng được ngay.
+
+- Gộp phát hiện trùng nhau (ba góc rất hay chỉ về cùng một nguyên nhân gốc).
+- Xếp ưu tiên theo tác động lên người dùng × số người ảnh hưởng ÷ chi phí sửa.
+- Mỗi mục: mô tả · nguyên nhân gốc · đề xuất · ước lượng công (S/M/L) · cách đo sau khi sửa.
+- Tách riêng nhóm "sửa nhanh trong 1 sprint" và nhóm "cần thiết kế lại".
+
+Ghi vào ket-qua/backlog-uiux.md:
+## Tóm tắt ## Sửa nhanh ## Cần thiết kế lại ## Bảng backlog đầy đủ ## Cách đo hiệu quả
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/backlog-uiux.md --muc 'Sửa nhanh' --muc 'Cần thiết kế lại' --muc 'Bảng backlog' --muc 'Cách đo' --tu-toi-thieu 600 --bang-toi-thieu 8"

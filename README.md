@@ -72,6 +72,10 @@ Agent chính có thể tự giao việc cho agent con. Dashboard chia làm bốn
 Muốn lặp lại cùng một quy trình, hay chạy trong CI, thì viết plan TOML — xem
 [mục 3](#3-lượt-chạy-đầu-tiên-từng-bước) trở đi.
 
+> **Không phải dân code?** Có bộ harness sẵn cho công việc thiết kế sản phẩm
+> (nghiên cứu, phản biện thiết kế, phân tích phỏng vấn, CJM, IA, kế hoạch):
+> xem [`kits/uiux/`](kits/uiux/README.md).
+
 ---
 
 ## Mục lục

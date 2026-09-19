@@ -1,0 +1,90 @@
+# Đề xuất giải pháp UI/UX: ba hướng KHÁC NHAU chạy song song, rồi so sánh.
+#
+# Đây là chỗ graph nhiều agent hơn hẳn một agent: ba hướng được nghĩ độc lập
+# nên không hướng nào bị neo vào hướng đầu tiên. Mỗi hướng nằm trên một branch
+# riêng, bạn lấy nguyên hướng mình chọn hoặc ghép từng phần.
+goal = "Đề xuất giải pháp: <BÀI TOÁN>"
+
+[[node]]
+id = "huong-an-toan"
+title = "Hướng ít rủi ro"
+agent = "claude"
+model = "sonnet"
+task = """
+Bài toán: <BÀI TOÁN>. Bối cảnh và ràng buộc ở dau-vao/.
+
+Hướng của bạn: CẢI TIẾN DẦN — giữ nguyên kiến trúc hiện tại, sửa những chỗ
+gây đau nhất, làm được trong 1-2 sprint.
+
+Mô tả giải pháp bằng lời đủ chi tiết để dev và designer hình dung được: từng
+màn hình, từng bước trong luồng, trạng thái rỗng/đang tải/lỗi, chuyện gì xảy ra
+khi người dùng làm sai. Có thể vẽ wireframe bằng ASCII.
+
+Ghi vào ket-qua/giai-phap-an-toan.md:
+## Tóm tắt hướng ## Luồng người dùng ## Mô tả màn hình ## Ưu và nhược
+## Chi phí ước lượng ## Cách đo hiệu quả
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/giai-phap-an-toan.md --muc 'Luồng người dùng' --muc 'Ưu và nhược' --muc 'Cách đo' --tu-toi-thieu 500"
+
+[[node]]
+id = "huong-thiet-ke-lai"
+title = "Hướng thiết kế lại"
+agent = "claude"
+model = "opus"
+task = """
+Bài toán: <BÀI TOÁN>. Bối cảnh và ràng buộc ở dau-vao/.
+
+Hướng của bạn: THIẾT KẾ LẠI — được phép thay đổi kiến trúc và luồng, miễn là
+giải đúng gốc vấn đề. Nhưng phải nói rõ cái giá phải trả: người dùng cũ học
+lại gì, dev làm lại gì, dữ liệu chuyển đổi thế nào.
+
+Mô tả chi tiết như hướng kia (luồng, màn hình, trạng thái, lỗi), kèm lý do vì
+sao cấu trúc mới đúng hơn cấu trúc cũ.
+
+Ghi vào ket-qua/giai-phap-thiet-ke-lai.md:
+## Tóm tắt hướng ## Vì sao phải đổi kiến trúc ## Luồng người dùng ## Mô tả màn hình
+## Cái giá phải trả ## Chi phí ước lượng ## Cách đo hiệu quả
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/giai-phap-thiet-ke-lai.md --muc 'Vì sao phải đổi' --muc 'Luồng người dùng' --muc 'giá phải trả' --muc 'Cách đo' --tu-toi-thieu 600"
+
+[[node]]
+id = "huong-khac-biet"
+title = "Hướng phá cách"
+agent = "claude"
+model = "opus"
+task = """
+Bài toán: <BÀI TOÁN>. Bối cảnh ở dau-vao/.
+
+Hướng của bạn: ĐẶT LẠI CÂU HỎI. Trước khi thiết kế, hỏi xem bài toán có đang
+bị phát biểu sai không — liệu có cách nào khiến bước này BIẾN MẤT thay vì làm
+nó đẹp hơn? Tự động hoá, dùng dữ liệu đã có, đổi thứ tự, gộp kênh, hay đẩy
+việc sang lúc khác trong hành trình.
+
+Nêu 2-3 ý tưởng khác hẳn hai hướng thông thường, mỗi ý tưởng kèm rủi ro và
+cách thử rẻ tiền (prototype, thử nghiệm trên nhóm nhỏ) trước khi làm thật.
+
+Ghi vào ket-qua/giai-phap-khac-biet.md:
+## Bài toán có thể đang sai ở đâu ## Ý tưởng ## Rủi ro ## Cách thử rẻ nhất
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/giai-phap-khac-biet.md --muc 'Ý tưởng' --muc 'Rủi ro' --muc 'Cách thử' --tu-toi-thieu 450"
+
+[[node]]
+id = "so-sanh"
+title = "So sánh và khuyến nghị"
+agent = "claude"
+model = "opus"
+deps = ["huong-an-toan", "huong-thiet-ke-lai", "huong-khac-biet"]
+task = """
+Ba giai-phap-*.md trong ket-qua/ là ba hướng độc lập. So sánh và khuyến nghị.
+
+- Bảng so sánh theo cùng một bộ tiêu chí: tác động lên người dùng, chi phí,
+  rủi ro, thời gian ra mắt, mức độ đảo lộn thói quen cũ.
+- Nêu rõ điều kiện chọn từng hướng ("nếu quý này phải ra mắt thì...").
+- Khuyến nghị MỘT hướng và nói thẳng bạn đang đánh đổi cái gì.
+- Chỉ ra phần nào của hai hướng còn lại nên ghép vào hướng được chọn.
+
+Ghi vào ket-qua/khuyen-nghi-giai-phap.md:
+## Tóm tắt ## Bảng so sánh ## Khuyến nghị và đánh đổi ## Phần nên ghép thêm
+## Bước tiếp theo ## Dàn ý thuyết trình
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/khuyen-nghi-giai-phap.md --muc 'Bảng so sánh' --muc 'Khuyến nghị' --muc 'Bước tiếp theo' --muc 'Dàn ý thuyết trình' --tu-toi-thieu 600 --bang-toi-thieu 5"

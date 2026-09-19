@@ -1,0 +1,49 @@
+# Kiến trúc thông tin: sitemap + cấu trúc nội dung + nhãn.
+#
+# Hai agent làm hai việc rất dễ lẫn nhau nếu để chung: dựng cấu trúc, và đặt
+# tên cho cấu trúc đó. Tách ra thì phần nhãn được soi bằng ngôn ngữ người dùng
+# chứ không bằng ngôn ngữ nội bộ công ty.
+goal = "Kiến trúc thông tin: <SẢN PHẨM / KHU VỰC>"
+
+[[node]]
+id = "sitemap"
+title = "Sitemap và cấu trúc"
+agent = "claude"
+model = "opus"
+task = """
+Dựng kiến trúc thông tin cho: <SẢN PHẨM / KHU VỰC>. Tư liệu ở dau-vao/
+(nội dung hiện có, danh sách tính năng, nghiên cứu người dùng).
+
+- Sitemap dạng cây, tối đa 3 cấp; cấp 4 trở đi là dấu hiệu cần gom nhóm lại.
+- Với mỗi mục: mục đích, người dùng nào cần, tần suất dùng (cao/trung bình/thấp).
+- Nêu rõ nguyên tắc gom nhóm bạn dùng (theo tác vụ? theo đối tượng? theo vòng đời?)
+  và vì sao nó hợp với sản phẩm này hơn cách khác.
+- Chỉ ra nội dung đang trùng lặp hoặc mồ côi (không lối vào).
+- Khác biệt web và mobile app nếu có: cái gì cắt bớt trên mobile và vì sao.
+
+Ghi vào ket-qua/ia-sitemap.md:
+## Nguyên tắc tổ chức ## Sitemap ## Bảng mục và mục đích ## Nội dung trùng hoặc mồ côi
+## Khác biệt web và mobile
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/ia-sitemap.md --muc 'Nguyên tắc tổ chức' --muc 'Sitemap' --muc 'trùng' --tu-toi-thieu 500 --bang-toi-thieu 8"
+
+[[node]]
+id = "nhan"
+title = "Nhãn và ngôn ngữ"
+agent = "claude"
+model = "sonnet"
+deps = ["sitemap"]
+task = """
+Đọc ket-qua/ia-sitemap.md. Việc của bạn là soi phần NHÃN, không sửa cấu trúc.
+
+- Mỗi nhãn: người dùng có tự hiểu không, hay chỉ người trong công ty hiểu?
+- Đề xuất nhãn thay thế bằng đúng từ người dùng hay dùng (bám dữ liệu trong
+  dau-vao/ nếu có transcript hoặc từ khoá tìm kiếm).
+- Chỉ ra nhãn mơ hồ, nhãn trùng nghĩa, nhãn quá dài trên mobile.
+- Đề xuất kịch bản card sorting hoặc tree testing để kiểm chứng cấu trúc này
+  với người dùng thật: bao nhiêu người, làm gì, đo gì.
+
+Ghi vào ket-qua/ia-nhan.md:
+## Bảng nhãn hiện tại và đề xuất ## Nhãn có rủi ro hiểu nhầm ## Kế hoạch kiểm chứng
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/ia-nhan.md --muc 'Bảng nhãn' --muc 'hiểu nhầm' --muc 'kiểm chứng' --tu-toi-thieu 400 --bang-toi-thieu 8"

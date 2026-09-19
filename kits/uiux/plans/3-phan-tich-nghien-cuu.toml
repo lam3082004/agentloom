@@ -1,0 +1,69 @@
+# Phân tích dữ liệu nghiên cứu người dùng: mã hoá định tính + định lượng chạy
+# song song, rồi đối chiếu. Tách đôi có chủ đích — trộn hai loại dữ liệu trong
+# một đầu dễ để cái này "giải thích" cái kia thành ra xác nhận thiên kiến.
+#
+# Đặt transcript phỏng vấn, kết quả khảo sát, ghi chép usability test vào dau-vao/.
+goal = "Phân tích nghiên cứu người dùng: <TÊN ĐỢT NGHIÊN CỨU>"
+
+[[node]]
+id = "ma-hoa"
+title = "Mã hoá định tính"
+agent = "claude"
+model = "opus"
+task = """
+Trong dau-vao/ là dữ liệu định tính (transcript phỏng vấn sâu, ghi chép
+usability test). Đọc TOÀN BỘ trước khi kết luận bất cứ điều gì.
+
+Làm theo skill "bằng chứng và insight":
+- gán mã cho từng đoạn đáng chú ý, gom mã thành chủ đề;
+- mỗi chủ đề kèm số người nhắc tới và ít nhất một trích dẫn nguyên văn;
+- tách rõ người dùng NÓI gì với người dùng LÀM gì;
+- ghi lại cả những chỗ dữ liệu mâu thuẫn nhau, đừng làm mượt.
+
+Ghi vào ket-qua/phan-tich-dinh-tinh.md:
+## Dữ liệu đã dùng ## Bảng mã và chủ đề ## Insight (kèm bằng chứng, độ tin cậy)
+## Trích dẫn đáng nhớ ## Điều chưa kết luận được
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/phan-tich-dinh-tinh.md --muc 'Bảng mã' --muc 'Insight' --muc 'chưa kết luận' --tu-toi-thieu 600 --bang-toi-thieu 5"
+
+[[node]]
+id = "dinh-luong"
+title = "Phân tích định lượng"
+agent = "claude"
+model = "sonnet"
+task = """
+Trong dau-vao/ là dữ liệu định lượng (kết quả khảo sát, số liệu sử dụng, tỷ lệ
+hoàn tất tác vụ). Nếu không có file định lượng nào, viết đúng một trang nêu:
+cần đo gì, bằng chỉ số nào, thu thập thế nào — rồi dừng.
+
+- Thống kê mô tả trước: cỡ mẫu, phân bố, tỷ lệ hoàn tất, thời gian làm tác vụ.
+- Chỉ ra chỗ số liệu KHÔNG đủ sức kết luận (mẫu nhỏ, lệch, câu hỏi dẫn dắt).
+- Tuyệt đối không suy nhân quả từ tương quan; nếu thấy tương quan thì ghi là
+  tương quan và đề xuất cách kiểm chứng.
+
+Ghi vào ket-qua/phan-tich-dinh-luong.md:
+## Dữ liệu và cỡ mẫu ## Kết quả ## Giới hạn của dữ liệu ## Câu hỏi cần đo tiếp
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/phan-tich-dinh-luong.md --muc 'cỡ mẫu' --muc 'Kết quả' --muc 'Giới hạn' --tu-toi-thieu 400"
+
+[[node]]
+id = "bao-cao"
+title = "Báo cáo insight"
+agent = "claude"
+model = "opus"
+deps = ["ma-hoa", "dinh-luong"]
+task = """
+Đọc ket-qua/phan-tich-dinh-tinh.md và ket-qua/phan-tich-dinh-luong.md.
+
+Việc của bạn là ĐỐI CHIẾU hai nguồn:
+- chỗ định tính và định lượng cùng chỉ một hướng → insight mạnh, độ tin cậy Cao;
+- chỗ chúng lệch nhau → nêu thẳng và giải thích khả năng vì sao;
+- mỗi insight kết thúc bằng một đề xuất hành động có thể đo được.
+
+Ghi vào ket-qua/bao-cao-nghien-cuu.md:
+## Tóm tắt cho lãnh đạo ## Insight chính (xếp theo mức tác động)
+## Bằng chứng đối chiếu (bảng) ## Đề xuất hành động ## Việc nghiên cứu tiếp theo
+## Dàn ý thuyết trình
+Tóm tắt tối đa 10 dòng. Dàn ý thuyết trình tối đa 10 slide, mỗi slide một thông điệp.
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/bao-cao-nghien-cuu.md --muc 'Tóm tắt' --muc 'Insight chính' --muc 'Bằng chứng' --muc 'Đề xuất' --muc 'Dàn ý thuyết trình' --tu-toi-thieu 700 --bang-toi-thieu 5"

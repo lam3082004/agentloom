@@ -1,0 +1,88 @@
+# Desk research: 3 agent tìm 3 hướng khác nhau, 1 agent tổng hợp.
+#
+# Chia ba vì một agent tìm tuần tự sẽ bám mãi một hướng; ba hướng chạy song
+# song rồi mới gộp cho góc nhìn rộng hơn mà không tốn thêm thời gian chờ.
+#
+# Sửa <CHỦ ĐỀ> và <BỐI CẢNH> trước khi chạy.
+goal = "Nghiên cứu thứ cấp: <CHỦ ĐỀ>"
+
+[[node]]
+id = "thi-truong"
+title = "Thị trường và đối thủ"
+agent = "claude"
+model = "sonnet"
+task = """
+Nghiên cứu thứ cấp về: <CHỦ ĐỀ>. Bối cảnh sản phẩm: <BỐI CẢNH>.
+
+Góc của bạn: THỊ TRƯỜNG VÀ ĐỐI THỦ.
+- 3-5 sản phẩm đang giải bài toán tương tự (trong nước và nước ngoài).
+- Với mỗi sản phẩm: cách họ giải quyết, điểm mạnh, điểm yếu, ảnh chụp/luồng
+  màn hình mô tả bằng lời nếu không truy cập được.
+- Quy ước/khuôn mẫu (pattern) mà người dùng đã quen vì phần lớn sản phẩm đều làm thế.
+
+Ghi vào ket-qua/thu-cap-thi-truong.md với các mục:
+## Mục tiêu ## Phương pháp ## Phát hiện ## So sánh đối thủ (bảng) ## Hàm ý cho sản phẩm ## Nguồn
+Mỗi phát hiện phải dẫn nguồn. Không truy cập được internet thì nói rõ ở mục
+Phương pháp và chỉ dùng kiến thức nền, đánh dấu độ tin cậy Thấp.
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/thu-cap-thi-truong.md --muc 'Phát hiện' --muc 'Hàm ý' --muc 'Nguồn' --tu-toi-thieu 500 --bang-toi-thieu 3 --nguon-toi-thieu 3"
+
+[[node]]
+id = "chuan-guideline"
+title = "Chuẩn và guideline"
+agent = "claude"
+model = "sonnet"
+task = """
+Nghiên cứu thứ cấp về: <CHỦ ĐỀ>. Bối cảnh: <BỐI CẢNH>.
+
+Góc của bạn: CHUẨN, GUIDELINE VÀ NGHIÊN CỨU ĐÃ CÔNG BỐ.
+- Hướng dẫn nền tảng liên quan (Apple HIG, Material Design, WCAG) — phần nào
+  ràng buộc bài toán này.
+- Nghiên cứu khả dụng đã công bố (NN/g, Baymard...) áp dụng được.
+- Các con số tham chiếu của ngành, kèm cỡ mẫu và năm.
+
+Ghi vào ket-qua/thu-cap-chuan.md với các mục:
+## Mục tiêu ## Phương pháp ## Phát hiện ## Ràng buộc bắt buộc tuân thủ ## Nguồn
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/thu-cap-chuan.md --muc 'Phát hiện' --muc 'Ràng buộc' --muc 'Nguồn' --tu-toi-thieu 500 --nguon-toi-thieu 3"
+
+[[node]]
+id = "nguoi-dung"
+title = "Người dùng và bối cảnh"
+agent = "claude"
+model = "sonnet"
+task = """
+Nghiên cứu thứ cấp về: <CHỦ ĐỀ>. Bối cảnh: <BỐI CẢNH>.
+
+Góc của bạn: NGƯỜI DÙNG VÀ BỐI CẢNH SỬ DỤNG.
+- Chân dung người dùng chính, nhu cầu và rào cản của họ.
+- Bối cảnh dùng thật: thiết bị, mạng, môi trường, mức độ thành thạo.
+- Đặc thù người dùng Việt Nam nếu có (thói quen thanh toán, ngôn ngữ, niềm tin).
+- Đọc mọi file trong dau-vao/ nếu có và ưu tiên dữ liệu thật ở đó hơn suy luận.
+
+Ghi vào ket-qua/thu-cap-nguoi-dung.md với các mục:
+## Mục tiêu ## Phương pháp ## Chân dung người dùng ## Rào cản ## Giả định cần kiểm chứng ## Nguồn
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/thu-cap-nguoi-dung.md --muc 'Chân dung' --muc 'Rào cản' --muc 'Giả định' --tu-toi-thieu 500"
+
+[[node]]
+id = "tong-hop"
+title = "Tổng hợp"
+agent = "claude"
+model = "opus"
+deps = ["thi-truong", "chuan-guideline", "nguoi-dung"]
+task = """
+Ba tài liệu thu-cap-*.md trong ket-qua/ là kết quả của ba hướng nghiên cứu.
+Đọc cả ba rồi viết bản tổng hợp cho người ra quyết định.
+
+Nhiệm vụ của bạn KHÔNG phải nối ba bài lại, mà là:
+- tìm chỗ ba nguồn ĐỒNG THUẬN (tin được) và chỗ MÂU THUẪN (phải nói rõ là mâu thuẫn);
+- rút ra hàm ý thiết kế xếp theo mức độ quan trọng;
+- chỉ ra khoảng trống dữ liệu và đề xuất cách lấp (khảo sát? phỏng vấn? thử nghiệm?).
+
+Ghi vào ket-qua/nghien-cuu-thu-cap.md với các mục:
+## Tóm tắt cho lãnh đạo ## Phát hiện chính ## Mâu thuẫn giữa các nguồn
+## Hàm ý thiết kế ## Khoảng trống dữ liệu và bước tiếp theo ## Nguồn
+Mục tóm tắt tối đa 10 dòng, đọc xong là quyết được.
+"""
+verify = "python3 uiux/kiem_tai_lieu.py ket-qua/nghien-cuu-thu-cap.md --muc 'Tóm tắt' --muc 'Phát hiện chính' --muc 'Mâu thuẫn' --muc 'Hàm ý' --muc 'Khoảng trống' --tu-toi-thieu 700 --nguon-toi-thieu 5"
