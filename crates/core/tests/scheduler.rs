@@ -627,6 +627,124 @@ verify = "test -f tu-a.txt"
     assert_eq!(s.done, 2);
 }
 
+fn publication_repo() -> Tmp {
+    let d = tmp();
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "a@b"],
+        vec!["config", "user.name", "t"],
+        vec!["commit", "--allow-empty", "-qm", "init"],
+    ] {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&d.0)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    d
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn commit_failure_marks_parent_failed_and_skips_dependents() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = publication_repo();
+    let hook = d.0.join(".git/hooks/pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\necho PUBLICATION_REJECTED >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let (s, ev) = run(
+        &d.0,
+        plan(
+            r#"
+goal = "commit failure"
+[[node]]
+id = "parent"
+title = "parent"
+agent = "fake"
+task = "WRITE:result.txt:important work"
+verify = "touch verified.txt"
+
+[[node]]
+id = "child"
+title = "child"
+agent = "fake"
+task = "WRITE:child.txt:should never run"
+deps = ["parent"]
+"#,
+        ),
+    )
+    .await;
+
+    assert!(!s.ok, "a failed commit must not report success");
+    assert_eq!((s.done, s.failed, s.skipped), (0, 1, 1));
+    let parent_ws =
+        d.0.join(".agentloom/worktrees")
+            .join(s.run.as_str())
+            .join("parent");
+    assert_eq!(
+        std::fs::read_to_string(parent_ws.join("result.txt")).unwrap(),
+        "important work"
+    );
+    assert!(
+        !parent_ws.join("verified.txt").exists(),
+        "do not verify unpublished work"
+    );
+    assert!(!parent_ws.parent().unwrap().join("child").exists());
+    assert!(
+        ev.iter().any(|e| {
+            e.node.as_ref().map(|id| id.as_str()) == Some("parent")
+                && matches!(&e.kind, EventKind::NodeFinished { ok: false, summary, .. }
+                if summary.contains("PUBLICATION_REJECTED"))
+        }),
+        "the event log must retain Git's diagnostic"
+    );
+}
+
+#[tokio::test]
+async fn no_project_changes_do_not_require_a_commit() {
+    let d = publication_repo();
+    let (s, _) = run(
+        &d.0,
+        plan(
+            r#"
+goal = "protocol only"
+[[node]]
+id = "parent"
+title = "parent"
+agent = "fake"
+task = 'EMIT:{"op":"write_memory","key":"note","value":"remember"}'
+
+[[node]]
+id = "child"
+title = "child"
+agent = "fake"
+task = "read only"
+deps = ["parent"]
+"#,
+        ),
+    )
+    .await;
+    assert!(s.ok);
+    assert_eq!(s.done, 2);
+    let branch = format!("al/{}/parent", s.run.as_str());
+    let out = std::process::Command::new("git")
+        .args(["diff", "--name-only", "HEAD", &branch])
+        .current_dir(&d.0)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(
+        out.stdout.is_empty(),
+        "protocol files must not be committed"
+    );
+}
+
 /// Nhánh graph do agent tự mọc ra cũng phải chịu verifier như node trong plan.
 /// Nếu không, "verifier có quyền phủ quyết" chỉ đúng với phần graph người viết.
 #[tokio::test]
