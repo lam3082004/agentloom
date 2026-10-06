@@ -74,6 +74,21 @@ impl RunJunk {
         }
         None
     }
+
+    /// A preview can be stale by the time the user confirms cleanup. Recheck
+    /// the whole run before deleting any of its worktrees, branches or logs.
+    async fn current_risk(&self) -> Option<String> {
+        let mut current = self.clone();
+        let (_, finished, recent) = doc_tom_tat(&self.log_dir.join("events.jsonl"));
+        current.finished = finished;
+        current.recent = recent;
+        for w in &mut current.worktrees {
+            let (ok, status) = git(&w.path, &["status", "--porcelain"]).await;
+            // Failure to inspect a worktree is not evidence that it is clean.
+            w.dirty = !ok || !status.is_empty();
+        }
+        current.risk()
+    }
 }
 
 /// Lựa chọn khi dọn. Mặc định (`Default`) là an toàn nhất: chỉ gỡ worktree
@@ -304,19 +319,20 @@ pub async fn clean(root: impl AsRef<Path>, targets: &[RunJunk], opts: &Options) 
     let _ = git(&repo_root, &["worktree", "prune"]).await;
     let mut d = Done::default();
     for t in targets {
-        if let Some(ly_do) = t.risk()
+        if let Some(ly_do) = t.current_risk().await
             && !opts.force
         {
             d.skipped.push((t.run.clone(), ly_do));
             continue;
         }
+        let mut removal_failed = false;
         for w in &t.worktrees {
             let bytes = dung_luong(&w.path);
             let p = w.path.to_string_lossy().into_owned();
             let (mut ok, mut err) = git(&repo_root, &["worktree", "remove", &p]).await;
-            // File chưa track (build artifact…) làm `remove` từ chối. Với
-            // worktree sạch thì --force chỉ xoá đúng những file đó.
-            if !ok && (!w.dirty || opts.force) {
+            // Git's final dirty-worktree check protects edits made AFTER our
+            // recheck. A stale preview must never authorize a forced retry.
+            if !ok && opts.force {
                 (ok, err) = git(&repo_root, &["worktree", "remove", "--force", &p]).await;
             }
             if ok {
@@ -324,7 +340,13 @@ pub async fn clean(root: impl AsRef<Path>, targets: &[RunJunk], opts: &Options) 
                 d.bytes += bytes;
             } else {
                 d.errors.push(format!("{}: {err}", w.path.display()));
+                removal_failed = true;
+                break;
             }
+        }
+        // Keep recovery information if a worktree could not be removed.
+        if removal_failed {
+            continue;
         }
         // Thư mục cha của run rỗng rồi thì bỏ luôn, đừng để lại vỏ.
         let _ = std::fs::remove_dir(repo_root.join(".agentloom").join("worktrees").join(&t.run));
@@ -643,6 +665,133 @@ mod tests {
         let done = clean(&d, &js, &Options::default()).await;
         assert_eq!(done.worktrees, 0);
         assert!(done.skipped[0].1.contains("đang chạy"));
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[tokio::test]
+    async fn clean_preserves_changes_written_after_scan() {
+        for tracked in [true, false] {
+            let run = "20260101-000000-stale";
+            let d = dung_repo("stale", run, true);
+            let a = d.join(".agentloom/worktrees").join(run).join("a");
+            let b = d.join(".agentloom/worktrees").join(run).join("b");
+            sh(&b, &["add", "-A"]);
+            sh(&b, &["commit", "-qm", "done"]);
+            lam_cu(&d, run);
+            let targets = scan(&d).await;
+            assert!(targets[0].risk().is_none());
+
+            // The user can edit a worktree while the cleanup preview is open.
+            let file = a.join(if tracked { "viec.txt" } else { "new.txt" });
+            std::fs::write(&file, "work written after the preview").unwrap();
+            let done = clean(
+                &d,
+                &targets,
+                &Options {
+                    branches: true,
+                    logs: true,
+                    force: false,
+                },
+            )
+            .await;
+
+            assert_eq!(
+                (done.worktrees, done.branches, done.logs),
+                (0, 0, 0),
+                "{done:?}"
+            );
+            assert_eq!(done.skipped.len(), 1, "{done:?}");
+            assert_eq!(
+                std::fs::read_to_string(file).unwrap(),
+                "work written after the preview"
+            );
+            assert!(
+                b.exists(),
+                "skip the whole run before removing any worktree"
+            );
+            assert!(
+                d.join(".agentloom/runs")
+                    .join(run)
+                    .join("events.jsonl")
+                    .exists()
+            );
+            assert_eq!(sh(&d, &["branch", "--list", "al/*"]).lines().count(), 2);
+            std::fs::remove_dir_all(d).ok();
+        }
+    }
+
+    #[tokio::test]
+    async fn clean_preserves_runs_updated_after_scan() {
+        let run = "20260101-000000-resumed";
+        let d = dung_repo("resumed", run, true);
+        let b = d.join(".agentloom/worktrees").join(run).join("b");
+        sh(&b, &["add", "-A"]);
+        sh(&b, &["commit", "-qm", "done"]);
+        lam_cu(&d, run);
+        let targets = scan(&d).await;
+        assert!(targets[0].risk().is_none());
+
+        let log = EventLog::create(targets[0].log_dir.join("events.jsonl")).unwrap();
+        log.emit(
+            None,
+            EventKind::Note {
+                text: "new activity after preview".into(),
+            },
+        );
+        let done = clean(
+            &d,
+            &targets,
+            &Options {
+                branches: true,
+                logs: true,
+                force: false,
+            },
+        )
+        .await;
+        assert_eq!(
+            (done.worktrees, done.branches, done.logs),
+            (0, 0, 0),
+            "{done:?}"
+        );
+        assert_eq!(done.skipped.len(), 1, "{done:?}");
+        assert!(done.skipped[0].1.contains("đang chạy"), "{done:?}");
+        assert!(b.exists());
+        assert!(log.path().exists());
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[tokio::test]
+    async fn clean_preserves_branches_and_logs_when_removal_fails() {
+        let run = "20260101-000000-locked";
+        let d = dung_repo("locked", run, true);
+        let a = d.join(".agentloom/worktrees").join(run).join("a");
+        let b = d.join(".agentloom/worktrees").join(run).join("b");
+        sh(&b, &["add", "-A"]);
+        sh(&b, &["commit", "-qm", "done"]);
+        lam_cu(&d, run);
+        let targets = scan(&d).await;
+        assert!(targets[0].risk().is_none());
+        sh(&d, &["worktree", "lock", &a.to_string_lossy()]);
+
+        let done = clean(
+            &d,
+            &targets,
+            &Options {
+                branches: true,
+                logs: true,
+                force: false,
+            },
+        )
+        .await;
+        assert!(!done.errors.is_empty(), "{done:?}");
+        assert_eq!(
+            (done.worktrees, done.branches, done.logs),
+            (0, 0, 0),
+            "{done:?}"
+        );
+        assert!(a.exists() && b.exists());
+        assert!(targets[0].log_dir.join("events.jsonl").exists());
+        assert_eq!(sh(&d, &["branch", "--list", "al/*"]).lines().count(), 2);
         std::fs::remove_dir_all(d).ok();
     }
 }
