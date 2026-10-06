@@ -374,13 +374,21 @@ impl Runner {
                     match res {
                         Ok(o) => {
                             if let Some(n) = self.graph.node_mut(&id) { n.session = o.session.clone(); }
-                            if o.ok && self.worktrees.enabled() && self.worktrees.has_changes(&id).await {
-                                let _ = self.worktrees
-                                    .commit_all(&id, &format!("agentloom: {id}"))
-                                    .await;
-                            }
                             let mut ok = o.ok;
                             let mut summary = o.summary.clone();
+                            if ok && self.worktrees.enabled()
+                                && self.graph.get(&id).is_some_and(|n| n.spec.isolate == Isolate::Worktree)
+                            {
+                                // Dependents merge this branch, so success is
+                                // only valid after the agent's changes are saved.
+                                if let Err(e) = self.worktrees
+                                    .commit_all(&id, &format!("agentloom: {id}"))
+                                    .await
+                                {
+                                    ok = false;
+                                    summary = format!("không lưu được kết quả vào branch — {e}");
+                                }
+                            }
                             if ok {
                                 if let Some((pass, msg)) = self.verify(&id).await {
                                     self.log.emit(

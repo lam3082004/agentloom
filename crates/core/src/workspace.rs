@@ -145,9 +145,30 @@ impl Worktrees {
         let p = self.base.join(id.as_str());
         // Loại .agentloom: nếu commit, file mutation sẽ theo branch merge
         // sang node join và bị áp lại lần nữa.
-        let (_, _) = git(&p, &["add", "-A", "--", ".", ":!.agentloom"]).await?;
-        let (ok, _) = git(&p, &["commit", "-m", msg]).await?;
-        Ok(ok)
+        let (ok, err) = git(&p, &["add", "-A", "--", ".", ":!.agentloom"]).await?;
+        if !ok {
+            anyhow::bail!("không stage được thay đổi của {id}: {err}");
+        }
+        // Protocol files are excluded above. An empty index is a legitimate
+        // no-op, whereas an actual commit failure must fail the node.
+        let diff = Command::new("git")
+            .current_dir(&p)
+            .args(["diff", "--cached", "--quiet", "--exit-code"])
+            .output()
+            .await?;
+        match diff.status.code() {
+            Some(0) => return Ok(false),
+            Some(1) => {}
+            _ => anyhow::bail!(
+                "không kiểm tra được index của {id}: {}",
+                String::from_utf8_lossy(&diff.stderr).trim()
+            ),
+        }
+        let (ok, err) = git(&p, &["commit", "-m", msg]).await?;
+        if !ok {
+            anyhow::bail!("không commit được thay đổi của {id}: {err}");
+        }
+        Ok(true)
     }
 
     /// Merge branch của các node nguồn vào worktree của node đích.
@@ -171,5 +192,48 @@ impl Worktrees {
             }
         }
         Ok(conflicts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn staging_failure_is_an_error_and_preserves_work() {
+        let root = std::env::temp_dir().join(format!("ag-stage-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "a@b"],
+            vec!["config", "user.name", "t"],
+            vec!["commit", "--allow-empty", "-qm", "init"],
+        ] {
+            let (ok, out) = git(&root, &args).await.unwrap();
+            assert!(ok, "{out}");
+        }
+        let worktrees = Worktrees::discover(&root, "stage-failure").await;
+        let id = NodeId::new("a").unwrap();
+        let cwd = worktrees.create(&id).await.unwrap();
+        std::fs::write(cwd.join("result.txt"), "keep this work").unwrap();
+        let (ok, git_dir) = git(&cwd, &["rev-parse", "--absolute-git-dir"])
+            .await
+            .unwrap();
+        assert!(ok, "{git_dir}");
+        std::fs::write(PathBuf::from(git_dir).join("index.lock"), "locked").unwrap();
+
+        let err = worktrees
+            .commit_all(&id, "agent result")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("stage") && err.contains("index.lock"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(cwd.join("result.txt")).unwrap(),
+            "keep this work"
+        );
+        let (ok, commits) = git(&cwd, &["rev-list", "--count", "HEAD"]).await.unwrap();
+        assert!(ok && commits == "1", "{commits}");
+        std::fs::remove_dir_all(root).ok();
     }
 }
